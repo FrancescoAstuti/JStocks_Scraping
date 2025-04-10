@@ -264,18 +264,21 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
         JButton refreshButton = new JButton("Refresh");
         JButton exportButton = new JButton("Export XLSX");
         JButton analyticsButton = new JButton("Analytics");
+        JButton dataButton = new JButton("Data");
 
         addButton.addActionListener(e -> addStock());
         deleteButton.addActionListener(e -> deleteStock());
         refreshButton.addActionListener(e -> refreshWatchlist());
         exportButton.addActionListener(e -> exportToExcel());
         analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist()); 
+        dataButton.addActionListener(e -> Download_Data.downloadTickerData(watchlistTable, tableModel));
 
         buttonPanel.add(addButton);
         buttonPanel.add(deleteButton);
         buttonPanel.add(refreshButton);
         buttonPanel.add(exportButton);
         buttonPanel.add(analyticsButton); 
+        buttonPanel.add(dataButton);
     }
 
     private void toggleColumnVisibility(String columnName, boolean visible) {
