@@ -87,15 +87,15 @@ public class Watchlist {
 
         String[] dynamicColumnNames = getDynamicColumnNames();
         String[] peForwardColumnNames = getPEForwardColumnNames();
-        
+
         tableModel = new DefaultTableModel(new Object[]{
-            "Name", "Ticker", "Price", "PE TTM", "PB TTM", "Div. yield %",
-            "Payout Ratio", "Graham Number", "PB Avg", "PE Avg",
-            "EPS TTM", "ROE TTM", "A-Score",
-            dynamicColumnNames[0], dynamicColumnNames[1], dynamicColumnNames[2],
-            "Debt to Equity", "EPS Growth 1", "Current Ratio", "Quick Ratio",
-            "EPS Growth 2", "EPS Growth 3", "DE Avg", "Industry", "ROE Avg", "P/FCF", "PFCF Avg",
-            peForwardColumnNames[0], peForwardColumnNames[1], peForwardColumnNames[2], "Volatility"}, 0) {
+                "Name", "Ticker", "Price", "PE TTM", "PB TTM", "Div. yield %",
+                "Payout Ratio", "Graham Number", "PB Avg", "PE Avg",
+                "EPS TTM", "ROE TTM", "A-Score",
+                dynamicColumnNames[0], dynamicColumnNames[1], dynamicColumnNames[2],
+                "Debt to Equity", "EPS Growth 1", "Current Ratio", "Quick Ratio",
+                "EPS Growth 2", "EPS Growth 3", "DE Avg", "Industry", "ROE Avg", "P/FCF", "PFCF Avg",
+                peForwardColumnNames[0], peForwardColumnNames[1], peForwardColumnNames[2], "Volatility"}, 0) {
 
             @Override
             public Class<?> getColumnClass(int columnIndex) {
@@ -168,14 +168,14 @@ public class Watchlist {
         });
 
         // Enhanced ScrollPane with explicit horizontal scroll bar policy
-JScrollPane scrollPane = new JScrollPane(
-    watchlistTable,
-    JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-    JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-);
-// Make sure the table doesn't automatically resize columns to fit the viewport
-watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-mainPanel.add(scrollPane, BorderLayout.CENTER);
+        JScrollPane scrollPane = new JScrollPane(
+                watchlistTable,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        );
+        // Make sure the table doesn't automatically resize columns to fit the viewport
+        watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        mainPanel.add(scrollPane, BorderLayout.CENTER);
 
         setupColumnControlPanel();
         mainPanel.add(columnControlPanel, BorderLayout.WEST);
@@ -270,14 +270,14 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
         deleteButton.addActionListener(e -> deleteStock());
         refreshButton.addActionListener(e -> refreshWatchlist());
         exportButton.addActionListener(e -> exportToExcel());
-        analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist()); 
+        analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist());
         dataButton.addActionListener(e -> Download_Data.downloadTickerData(watchlistTable, tableModel));
 
         buttonPanel.add(addButton);
         buttonPanel.add(deleteButton);
         buttonPanel.add(refreshButton);
         buttonPanel.add(exportButton);
-        buttonPanel.add(analyticsButton); 
+        buttonPanel.add(analyticsButton);
         buttonPanel.add(dataButton);
     }
 
@@ -322,37 +322,37 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                     JSONObject jsonObject = jsonArray.getJSONObject(i);
 
                     Object[] rowData = new Object[]{
-                        jsonObject.optString("name", ""),
-                        jsonObject.optString("ticker", "").toUpperCase(),
-                        jsonObject.optDouble("price", 0.0),
-                        jsonObject.optDouble("peTtm", 0.0),
-                        jsonObject.optDouble("pbTtm", 0.0),
-                        jsonObject.optDouble("dividendYield", 0.0),
-                        jsonObject.optDouble("payoutRatio", 0.0),
-                        jsonObject.optDouble("grahamNumber", 0.0),
-                        jsonObject.optDouble("pbAvg", 0.0),
-                        jsonObject.optDouble("peAvg", 0.0),
-                        jsonObject.optDouble("epsTtm", 0.0),
-                        jsonObject.optDouble("roeTtm", 0.0),
-                        jsonObject.optDouble("aScore", 0.0),
-                        jsonObject.optDouble("epsCurrentYear", 0.0),
-                        jsonObject.optDouble("epsNextYear", 0.0),
-                        jsonObject.optDouble("epsYear3", 0.0),
-                        jsonObject.optDouble("debtToEquity", 0.0),
-                        jsonObject.optDouble("epsGrowth1", 0.0),
-                        jsonObject.optDouble("currentRatio", 0.0),
-                        jsonObject.optDouble("quickRatio", 0.0),
-                        jsonObject.optDouble("epsGrowth2", 0.0),
-                        jsonObject.optDouble("epsGrowth3", 0.0),
-                        jsonObject.optDouble("deAvg", 0.0),
-                        jsonObject.optString("industry", "N/A"),
-                        jsonObject.optDouble("roeAvg", 0.0),
-                        jsonObject.optDouble("priceToFCF_TTM", 0.0),
-                        jsonObject.optDouble("priceToFCF_Avg", 0.0),
-                        jsonObject.optDouble("peForward1", 0.0),
-                        jsonObject.optDouble("peForward2", 0.0),
-                        jsonObject.optDouble("peForward3", 0.0),
-                        jsonObject.optDouble("volatility", 0.0),};
+                            jsonObject.optString("name", ""),
+                            jsonObject.optString("ticker", "").toUpperCase(),
+                            jsonObject.optDouble("price", 0.0),
+                            jsonObject.optDouble("peTtm", 0.0),
+                            jsonObject.optDouble("pbTtm", 0.0),
+                            jsonObject.optDouble("dividendYield", 0.0),
+                            jsonObject.optDouble("payoutRatio", 0.0),
+                            jsonObject.optDouble("grahamNumber", 0.0),
+                            jsonObject.optDouble("pbAvg", 0.0),
+                            jsonObject.optDouble("peAvg", 0.0),
+                            jsonObject.optDouble("epsTtm", 0.0),
+                            jsonObject.optDouble("roeTtm", 0.0),
+                            jsonObject.optDouble("aScore", 0.0),
+                            jsonObject.optDouble("epsCurrentYear", 0.0),
+                            jsonObject.optDouble("epsNextYear", 0.0),
+                            jsonObject.optDouble("epsYear3", 0.0),
+                            jsonObject.optDouble("debtToEquity", 0.0),
+                            jsonObject.optDouble("epsGrowth1", 0.0),
+                            jsonObject.optDouble("currentRatio", 0.0),
+                            jsonObject.optDouble("quickRatio", 0.0),
+                            jsonObject.optDouble("epsGrowth2", 0.0),
+                            jsonObject.optDouble("epsGrowth3", 0.0),
+                            jsonObject.optDouble("deAvg", 0.0),
+                            jsonObject.optString("industry", "N/A"),
+                            jsonObject.optDouble("roeAvg", 0.0),
+                            jsonObject.optDouble("priceToFCF_TTM", 0.0),
+                            jsonObject.optDouble("priceToFCF_Avg", 0.0),
+                            jsonObject.optDouble("peForward1", 0.0),
+                            jsonObject.optDouble("peForward2", 0.0),
+                            jsonObject.optDouble("peForward3", 0.0),
+                            jsonObject.optDouble("volatility", 0.0),};
                     tableModel.addRow(rowData);
                     System.out.println("Added stock: " + jsonObject.optString("ticker", "")
                             + " with price: " + jsonObject.optDouble("price", 0.0));
@@ -608,8 +608,8 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                 double aScore = 0;
 
                 Object[] rowData = new Object[]{
-                    name, ticker, price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
-                    epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg, industry,};
+                        name, ticker, price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
+                        epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg, industry,};
 
                 tableModel.addRow(rowData);
                 System.out.println("Added stock: " + ticker + " deAvg" + deAvg);
@@ -724,18 +724,18 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                             double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                             double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
                             double epsGrowth3 = calculateEpsGrowth3(epsYear3, epsNextYear);
-                           //* double pbAvg = fetchAveragePB(ticker);
+                            //* double pbAvg = fetchAveragePB(ticker);
                             double peForward1 = calculatePEForward(price, epsCurrentYear);
                             double peForward2 = calculatePEForward(price, epsNextYear);
                             double peForward3 = calculatePEForward(price, epsYear3);
-                            //*double peAvg = fetchAveragePE(ticker);
+                            //* double peAvg = fetchAveragePE(ticker);
                             double priceToFCF_TTM = TTM_Ratios.getPriceToFreeCashFlowRatioTTM(ticker);
-                           //* double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
-                           //* double roeAvg = fetchAverageROE(ticker);
-                           //* double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
+                            //* double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
+                            //* double roeAvg = fetchAverageROE(ticker);
+                            //* double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
                             //* double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
                             String industry = CompanyOverview.fetchIndustry(ticker);
-                           //* double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatio, quickRatio, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg);
+                            //* double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatio, quickRatio, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg);
                             double volatilityScore = Analytics.calculateVolatilityScore(ticker);
                             //*System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
 
@@ -745,12 +745,12 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                                 tableModel.setValueAt(pbTtm, modelRow, 4);
                                 tableModel.setValueAt(dividendYieldTTM, modelRow, 5);
                                 tableModel.setValueAt(payoutRatio, modelRow, 6);
-                               //* tableModel.setValueAt(grahamNumber, modelRow, 7);
+                                //* tableModel.setValueAt(grahamNumber, modelRow, 7);
                                 //*tableModel.setValueAt(pbAvg, modelRow, 8); // PB Avg
-                               //* tableModel.setValueAt(peAvg, modelRow, 9); // PE Avg
+                                //* tableModel.setValueAt(peAvg, modelRow, 9); // PE Avg
                                 tableModel.setValueAt(epsTtm, modelRow, 10);
                                 tableModel.setValueAt(roeTtm, modelRow, 11);
-                               //* tableModel.setValueAt(aScore, modelRow, 12);
+                                //* tableModel.setValueAt(aScore, modelRow, 12);
                                 tableModel.setValueAt(epsCurrentYear, modelRow, 13);
                                 tableModel.setValueAt(epsNextYear, modelRow, 14);
                                 tableModel.setValueAt(epsYear3, modelRow, 15);
@@ -760,9 +760,9 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                                 tableModel.setValueAt(quickRatio, modelRow, 19); // Index of the new "Quick Ratio" column
                                 tableModel.setValueAt(epsGrowth2, modelRow, 20);
                                 tableModel.setValueAt(epsGrowth3, modelRow, 21);
-                               //*tableModel.setValueAt(deAvg, modelRow, 22);
+                                //*tableModel.setValueAt(deAvg, modelRow, 22);
                                 tableModel.setValueAt(industry, modelRow, 23);
-                               //* tableModel.setValueAt(roeAvg, modelRow, 24); // ROE Avg
+                                //* tableModel.setValueAt(roeAvg, modelRow, 24); // ROE Avg
                                 tableModel.setValueAt(priceToFCF_TTM, modelRow, 25);
                                 //*tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
                                 tableModel.setValueAt(peForward1, modelRow, 27);
@@ -1070,8 +1070,8 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
     }
 
     private double calculateAScore(double pbAvg, double pbTtm, double peAvg, double peTtm, double payoutRatio, double debtToEquity,
-            double roe, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
-            double currentRatio, double quickRatio, double grahamNumberTerm, double price, double priceToFCF_TTM, double priceToFCF_AVG) {
+                                   double roe, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
+                                   double currentRatio, double quickRatio, double grahamNumberTerm, double price, double priceToFCF_TTM, double priceToFCF_AVG) {
         double peRatioTerm = 0;
         double pbRatioTerm = 0;
         double payoutRatioTerm = 0;
@@ -1124,11 +1124,11 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
         if (priceToFCF_TTM <= 0) {
             pfcfTerm = -2;  // Penalty for negative FCF
         } else if (priceToFCF_AVG / priceToFCF_TTM < 1) {
-            pfcfTerm = -1;  // Current PFCF is higher than average (potentially overvalued)
+            pfcfTerm = -1;    // Current PFCF is higher than average (potentially overvalued)
         } else if (priceToFCF_AVG / priceToFCF_TTM >= 1 && priceToFCF_AVG / priceToFCF_TTM < 1.5) {
-            pfcfTerm = 1;   // Current PFCF is lower than average but not significantly
+            pfcfTerm = 1;      // Current PFCF is lower than average but not significantly
         } else if (priceToFCF_AVG / priceToFCF_TTM >= 1.5) {
-            pfcfTerm = 2;   // Current PFCF is significantly lower than average (potentially undervalued)
+            pfcfTerm = 2;      // Current PFCF is significantly lower than average (potentially undervalued)
         }
 
         // Conditions for dividendYieldTerm

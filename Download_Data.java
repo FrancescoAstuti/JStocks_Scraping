@@ -15,7 +15,7 @@ public class Download_Data {
     private static final String API_KEY = API_key.getApiKey();
     
     /**
-     * Downloads key metrics data for all tickers in the watchlist
+     * Downloads financial data for all tickers in the watchlist
      * 
      * @param watchlistTable The JTable containing watchlist data
      * @param tableModel The table model for accessing data
@@ -36,9 +36,9 @@ public class Download_Data {
             dataDir.mkdirs();
         }
 
-        // Create progress bar panel
+        // Create progress bar panel - now with 5 API calls per ticker
         JPanel progressPanel = new JPanel(new BorderLayout());
-        JProgressBar progressBar = new JProgressBar(0, tableModel.getRowCount());
+        JProgressBar progressBar = new JProgressBar(0, tableModel.getRowCount() * 5); 
         JLabel statusLabel = new JLabel("Downloading data...");
         progressPanel.add(statusLabel, BorderLayout.NORTH);
         progressPanel.add(progressBar, BorderLayout.CENTER);
@@ -54,43 +54,91 @@ public class Download_Data {
             @Override
             protected Void doInBackground() {
                 int rowCount = tableModel.getRowCount();
+                int progressCounter = 0;
+                
                 for (int i = 0; i < rowCount; i++) {
                     int modelRow = watchlistTable.convertRowIndexToModel(i);
                     String ticker = (String) tableModel.getValueAt(modelRow, 1);
                     
                     try {
-                        // Update progress
-                        final int progress = i;
+                        // Create a final copy of the loop counter for use in lambdas
+                        final int currentIndex = i + 1;
                         final String currentTicker = ticker;
+                        
+                        // 1. Update progress for key metrics download
+                        final int keyMetricsProgress = progressCounter;
                         SwingUtilities.invokeLater(() -> {
-                            progressBar.setValue(progress);
-                            statusLabel.setText("Downloading data for: " + currentTicker + " (" + progress + "/" + rowCount + ")");
+                            progressBar.setValue(keyMetricsProgress);
+                            statusLabel.setText("Downloading key metrics for: " + currentTicker + " (" + currentIndex + "/" + rowCount + ")");
                         });
 
-                        // Fetch data from Financial Modeling Prep API
-                        String urlString = String.format("https://financialmodelingprep.com/api/v3/key-metrics/%s?period=annual&apikey=%s", 
+                        // Fetch key metrics data
+                        String keyMetricsUrl = String.format("https://financialmodelingprep.com/api/v3/key-metrics/%s?period=annual&apikey=%s", 
                                                         ticker, API_KEY);
-                        URL url = new URL(urlString);
-                        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                        connection.setRequestMethod("GET");
+                        downloadAndSaveData(keyMetricsUrl, new File(dataDir, ticker + "_Key_Metrics_FY.json"), ticker, "key metrics");
                         
-                        int responseCode = connection.getResponseCode();
-                        if (responseCode == 200) {
-                            // Read the response
-                            Scanner scanner = new Scanner(url.openStream());
-                            String response = scanner.useDelimiter("\\Z").next();
-                            scanner.close();
-                            
-                            // Save to file
-                            File outputFile = new File(dataDir, ticker + "_Key_Metrics.json");
-                            try (FileWriter writer = new FileWriter(outputFile)) {
-                                writer.write(response);
-                            }
-                            
-                            System.out.println("Downloaded data for " + ticker);
-                        } else {
-                            System.err.println("Failed to download data for " + ticker + ": HTTP " + responseCode);
-                        }
+                        // Update progress counter
+                        progressCounter++;
+                        
+                        // 2. Update progress for financial ratios download
+                        final int ratiosProgress = progressCounter;
+                        SwingUtilities.invokeLater(() -> {
+                            progressBar.setValue(ratiosProgress);
+                            statusLabel.setText("Downloading financial ratios for: " + currentTicker + " (" + currentIndex + "/" + rowCount + ")");
+                        });
+
+                        // Fetch financial ratios data
+                        String ratiosUrl = String.format("https://financialmodelingprep.com/api/v3/ratios/%s?period=annual&apikey=%s", 
+                                                        ticker, API_KEY);
+                        downloadAndSaveData(ratiosUrl, new File(dataDir, ticker + "_Financial_Ratios_FY.json"), ticker, "financial ratios");
+                        
+                        // Update progress counter
+                        progressCounter++;
+                        
+                        // 3. Update progress for income statement download
+                        final int incomeStatementProgress = progressCounter;
+                        SwingUtilities.invokeLater(() -> {
+                            progressBar.setValue(incomeStatementProgress);
+                            statusLabel.setText("Downloading income statement for: " + currentTicker + " (" + currentIndex + "/" + rowCount + ")");
+                        });
+                        
+                        // Fetch income statement data
+                        String incomeStatementUrl = String.format("https://financialmodelingprep.com/api/v3/income-statement/%s?period=annual&apikey=%s", 
+                                                        ticker, API_KEY);
+                        downloadAndSaveData(incomeStatementUrl, new File(dataDir, ticker + "_Income_Statement_FY.json"), ticker, "income statement");
+                        
+                        // Update progress counter
+                        progressCounter++;
+                        
+                        // 4. Update progress for balance sheet statement download
+                        final int balanceSheetProgress = progressCounter;
+                        SwingUtilities.invokeLater(() -> {
+                            progressBar.setValue(balanceSheetProgress);
+                            statusLabel.setText("Downloading balance sheet for: " + currentTicker + " (" + currentIndex + "/" + rowCount + ")");
+                        });
+                        
+                        // Fetch balance sheet statement data
+                        String balanceSheetUrl = String.format("https://financialmodelingprep.com/api/v3/balance-sheet-statement/%s?period=annual&apikey=%s", 
+                                                        ticker, API_KEY);
+                        downloadAndSaveData(balanceSheetUrl, new File(dataDir, ticker + "_Balance_Sheet_Statement_FY.json"), ticker, "balance sheet statement");
+                        
+                        // Update progress counter
+                        progressCounter++;
+                        
+                        // 5. Update progress for cash flow statement download
+                        final int cashFlowProgress = progressCounter;
+                        SwingUtilities.invokeLater(() -> {
+                            progressBar.setValue(cashFlowProgress);
+                            statusLabel.setText("Downloading cash flow statement for: " + currentTicker + " (" + currentIndex + "/" + rowCount + ")");
+                        });
+                        
+                        // Fetch cash flow statement data
+                        String cashFlowUrl = String.format("https://financialmodelingprep.com/api/v3/cash-flow-statement/%s?period=annual&apikey=%s", 
+                                                        ticker, API_KEY);
+                        downloadAndSaveData(cashFlowUrl, new File(dataDir, ticker + "_Cash_Flow_Statement_FY.json"), ticker, "cash flow statement");
+                        
+                        // Update progress counter
+                        progressCounter++;
                         
                         // Small delay to prevent API rate limiting
                         Thread.sleep(500);
@@ -121,5 +169,38 @@ public class Download_Data {
         };
 
         worker.execute();
+    }
+    
+    /**
+     * Helper method to download and save data from a given URL
+     * 
+     * @param urlString The URL to download data from
+     * @param outputFile The file to save the data to
+     * @param ticker The ticker symbol for logging
+     * @param dataType The type of data being downloaded for logging
+     * @throws Exception If an error occurs during download or save
+     */
+    private static void downloadAndSaveData(String urlString, File outputFile, String ticker, String dataType) throws Exception {
+        URL url = new URL(urlString);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+        
+        int responseCode = connection.getResponseCode();
+        if (responseCode == 200) {
+            // Read the response
+            Scanner scanner = new Scanner(url.openStream());
+            String response = scanner.useDelimiter("\\Z").next();
+            scanner.close();
+            
+            // Save to file
+            try (FileWriter writer = new FileWriter(outputFile)) {
+                writer.write(response);
+            }
+            
+            System.out.println("Downloaded " + dataType + " for " + ticker);
+        } else {
+            System.err.println("Failed to download " + dataType + " for " + ticker + ": HTTP " + responseCode);
+            throw new Exception("HTTP Error: " + responseCode);
+        }
     }
 }
