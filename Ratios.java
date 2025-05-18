@@ -4,6 +4,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -213,7 +215,7 @@ public class Ratios {
         return debtToEquityRatios;
     }
     
-        public static List<RatioData> fetchHistoricalReturnOnEquity(String ticker) {
+    public static List<RatioData> fetchHistoricalReturnOnEquity(String ticker) {
         List<RatioData> ReturnOnEquityRatios = new ArrayList<>();
         try {
             URL url = new URL("https://financialmodelingprep.com/api/v3/ratios/" + ticker + "?period=annual&apikey=" + API_KEY);
@@ -249,58 +251,118 @@ public class Ratios {
         return ReturnOnEquityRatios;
     }
     
-    public static double fetchDebtToEquityAverage(String ticker) {
-    List<RatioData> debtToEquityRatios = fetchHistoricalDebtToEquity(ticker);
-    
-    if (debtToEquityRatios.isEmpty()) {
-        return 0.0;
-    }
-
-    double sum = 0;
-    int count = 0;
-    
-    for (RatioData ratio : debtToEquityRatios) {
-        double value = ratio.getValue();
-        if (value != 0) {
-            value = Math.min(Math.max(value, -3.0), 3.0); // Cap between -3 and 3
-            sum += value;
-            count++;
+    // New method to fetch historical payout ratios from local files
+    public static List<RatioData> fetchHistoricalPayoutRatio(String ticker) {
+        List<RatioData> payoutRatios = new ArrayList<>();
+        File file = new File("company_data/" + ticker + "_Financial_Ratios_FY.json");
+        
+        if (!file.exists()) {
+            System.out.println("No financial ratios file found for ticker: " + ticker);
+            return payoutRatios;
         }
+        
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            StringBuilder content = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.append(line);
+            }
+            
+            JSONArray jsonArray = new JSONArray(content.toString());
+            if (jsonArray.length() == 0) {
+                System.out.println("No historical payout ratio data available for ticker: " + ticker);
+            } else {
+                for (int i = 0; i < jsonArray.length(); i++) {
+                    JSONObject jsonObject = jsonArray.getJSONObject(i);
+                    String date = jsonObject.getString("date");
+                    double payoutRatio = jsonObject.optDouble("payoutRatio", 0.0);
+                    payoutRatios.add(new RatioData(date, payoutRatio));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error reading payout ratio data for " + ticker + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return payoutRatios;
     }
     
-    return count > 0 ? round(sum / count, 2) : 0.0;
-}
+    // Method to calculate average payout ratio
+    public static double fetchPayoutRatioAverage(String ticker) {
+        List<RatioData> payoutRatios = fetchHistoricalPayoutRatio(ticker);
+        
+        if (payoutRatios.isEmpty()) {
+            return 0.0;
+        }
+        
+        double sum = 0;
+        int count = 0;
+        
+        for (RatioData ratio : payoutRatios) {
+            double value = ratio.getValue();
+            if (value >= 0) {  // Only include non-negative payout ratios
+                // Cap extreme values to prevent outliers from skewing the average
+                value = Math.min(value, 1.0);  // Cap at 100% (1.0)
+                sum += value;
+                count++;
+            }
+        }
+        
+        return count > 0 ? round(sum / count, 2) : 0.0;
+    }
+    
+    public static double fetchDebtToEquityAverage(String ticker) {
+        List<RatioData> debtToEquityRatios = fetchHistoricalDebtToEquity(ticker);
+        
+        if (debtToEquityRatios.isEmpty()) {
+            return 0.0;
+        }
+
+        double sum = 0;
+        int count = 0;
+        
+        for (RatioData ratio : debtToEquityRatios) {
+            double value = ratio.getValue();
+            if (value != 0) {
+                value = Math.min(Math.max(value, -3.0), 3.0); // Cap between -3 and 3
+                sum += value;
+                count++;
+            }
+        }
+        
+        return count > 0 ? round(sum / count, 2) : 0.0;
+    }
     
     public static double fetchPriceToFreeCashFlowAverage(String ticker) {
-    List<RatioData> pfcfRatios = fetchHistoricalPFCF(ticker);
-    
-    if (pfcfRatios.isEmpty()) {
-        return 0.0;
-    }
-
-    double sum = 0;
-    int count = 0;
-    
-    for (RatioData ratio : pfcfRatios) {
-        double value = ratio.getValue();
-        if (value != 0) {
-            // Cap extreme values to prevent outliers from skewing the average
-            value = Math.min(Math.max(value, -100.0), 100.0); // Cap between -100 and 100
-            sum += value;
-            count++;
+        List<RatioData> pfcfRatios = fetchHistoricalPFCF(ticker);
+        
+        if (pfcfRatios.isEmpty()) {
+            return 0.0;
         }
+
+        double sum = 0;
+        int count = 0;
+        
+        for (RatioData ratio : pfcfRatios) {
+            double value = ratio.getValue();
+            if (value != 0) {
+                // Cap extreme values to prevent outliers from skewing the average
+                value = Math.min(Math.max(value, -100.0), 100.0); // Cap between -100 and 100
+                sum += value;
+                count++;
+            }
+        }
+        
+        return count > 0 ? round(sum / count, 2) : 0.0;
+    } 
+    
+    private static double round(double value, int places) {
+        if (places < 0) throw new IllegalArgumentException();
+        long factor = (long) Math.pow(10, places);
+        value = value * factor;
+        long tmp = Math.round(value);
+        return (double) tmp / factor;
     }
-    
-    return count > 0 ? round(sum / count, 2) : 0.0;
-} 
-    
-private static double round(double value, int places) {
-    if (places < 0) throw new IllegalArgumentException();
-    long factor = (long) Math.pow(10, places);
-    value = value * factor;
-    long tmp = Math.round(value);
-    return (double) tmp / factor;
-}
 }
 
 class RatioData {

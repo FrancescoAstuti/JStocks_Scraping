@@ -87,15 +87,15 @@ public class Watchlist {
 
         String[] dynamicColumnNames = getDynamicColumnNames();
         String[] peForwardColumnNames = getPEForwardColumnNames();
-
+        
         tableModel = new DefaultTableModel(new Object[]{
-                "Name", "Ticker", "Price", "PE TTM", "PB TTM", "Div. yield %",
-                "Payout Ratio", "Graham Number", "PB Avg", "PE Avg",
-                "EPS TTM", "ROE TTM", "A-Score",
-                dynamicColumnNames[0], dynamicColumnNames[1], dynamicColumnNames[2],
-                "Debt to Equity", "EPS Growth 1", "Current Ratio", "Quick Ratio",
-                "EPS Growth 2", "EPS Growth 3", "DE Avg", "Industry", "ROE Avg", "P/FCF", "PFCF Avg",
-                peForwardColumnNames[0], peForwardColumnNames[1], peForwardColumnNames[2], "Volatility"}, 0) {
+            "Name", "Ticker", "Price", "PE TTM", "PB TTM", "Div. yield %",
+            "Payout Ratio", "Graham Number", "PB Avg", "PE Avg",
+            "EPS TTM", "ROE TTM", "A-Score",
+            dynamicColumnNames[0], dynamicColumnNames[1], dynamicColumnNames[2],
+            "Debt to Equity", "EPS Growth 1", "Current Ratio", "Quick Ratio",
+            "EPS Growth 2", "EPS Growth 3", "DE Avg", "Industry", "ROE Avg", "P/FCF", "PFCF Avg",
+            peForwardColumnNames[0], peForwardColumnNames[1], peForwardColumnNames[2], "Volatility","PR Avg"}, 0) {
 
             @Override
             public Class<?> getColumnClass(int columnIndex) {
@@ -129,6 +129,7 @@ public class Watchlist {
                     case 28:
                     case 29:
                     case 30:
+                    case 31:
 
                         return Double.class;
                     default:
@@ -166,16 +167,72 @@ public class Watchlist {
                 }
             }
         });
+        
+        
+        // Add this code to the createAndShowGUI method after the renderer setup
+// (around line 152, after the cell renderer setup)
+
+// Create context menu
+JPopupMenu popupMenu = new JPopupMenu();
+JMenuItem refreshStockItem = new JMenuItem("Refresh Stock");
+refreshStockItem.addActionListener(e -> {
+    int row = watchlistTable.getSelectedRow();
+    if (row != -1) {
+        int modelRow = watchlistTable.convertRowIndexToModel(row);
+        String ticker = (String) tableModel.getValueAt(modelRow, 1);
+        refreshSingleStock(ticker, modelRow);
+    }
+});
+popupMenu.add(refreshStockItem);
+
+// Replace the existing mouse listener with this one that handles both left-click and right-click
+watchlistTable.addMouseListener(new MouseAdapter() {
+    @Override
+    public void mouseClicked(MouseEvent e) {
+        if (e.getClickCount() == 1 && e.getButton() == MouseEvent.BUTTON1) {  // Left-click
+            int row = watchlistTable.rowAtPoint(e.getPoint());
+            int col = watchlistTable.columnAtPoint(e.getPoint());
+
+            if (row >= 0 && col == 1) {  // Check if click is in the Ticker column
+                String ticker = (String) watchlistTable.getValueAt(row, col);
+                // Get the company name from the first column (index 0)
+                String companyName = (String) watchlistTable.getValueAt(row, 0);
+                CompanyOverview.showCompanyOverview(ticker, companyName);
+            }
+        }
+    }
+
+    @Override
+    public void mousePressed(MouseEvent e) {
+        showPopupIfNeeded(e);
+    }
+
+    @Override
+    public void mouseReleased(MouseEvent e) {
+        showPopupIfNeeded(e);
+    }
+
+    private void showPopupIfNeeded(MouseEvent e) {
+        if (e.isPopupTrigger()) {  // Right-click
+            int row = watchlistTable.rowAtPoint(e.getPoint());
+            if (row >= 0) {
+                watchlistTable.setRowSelectionInterval(row, row);
+                popupMenu.show(e.getComponent(), e.getX(), e.getY());
+            }
+        }
+    }
+});
+        
 
         // Enhanced ScrollPane with explicit horizontal scroll bar policy
-        JScrollPane scrollPane = new JScrollPane(
-                watchlistTable,
-                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-                JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-        );
-        // Make sure the table doesn't automatically resize columns to fit the viewport
-        watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        mainPanel.add(scrollPane, BorderLayout.CENTER);
+JScrollPane scrollPane = new JScrollPane(
+    watchlistTable,
+    JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+    JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+);
+// Make sure the table doesn't automatically resize columns to fit the viewport
+watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+mainPanel.add(scrollPane, BorderLayout.CENTER);
 
         setupColumnControlPanel();
         mainPanel.add(columnControlPanel, BorderLayout.WEST);
@@ -270,14 +327,14 @@ public class Watchlist {
         deleteButton.addActionListener(e -> deleteStock());
         refreshButton.addActionListener(e -> refreshWatchlist());
         exportButton.addActionListener(e -> exportToExcel());
-        analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist());
+        analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist()); 
         dataButton.addActionListener(e -> Download_Data.downloadTickerData(watchlistTable, tableModel));
 
         buttonPanel.add(addButton);
         buttonPanel.add(deleteButton);
         buttonPanel.add(refreshButton);
         buttonPanel.add(exportButton);
-        buttonPanel.add(analyticsButton);
+        buttonPanel.add(analyticsButton); 
         buttonPanel.add(dataButton);
     }
 
@@ -322,37 +379,41 @@ public class Watchlist {
                     JSONObject jsonObject = jsonArray.getJSONObject(i);
 
                     Object[] rowData = new Object[]{
-                            jsonObject.optString("name", ""),
-                            jsonObject.optString("ticker", "").toUpperCase(),
-                            jsonObject.optDouble("price", 0.0),
-                            jsonObject.optDouble("peTtm", 0.0),
-                            jsonObject.optDouble("pbTtm", 0.0),
-                            jsonObject.optDouble("dividendYield", 0.0),
-                            jsonObject.optDouble("payoutRatio", 0.0),
-                            jsonObject.optDouble("grahamNumber", 0.0),
-                            jsonObject.optDouble("pbAvg", 0.0),
-                            jsonObject.optDouble("peAvg", 0.0),
-                            jsonObject.optDouble("epsTtm", 0.0),
-                            jsonObject.optDouble("roeTtm", 0.0),
-                            jsonObject.optDouble("aScore", 0.0),
-                            jsonObject.optDouble("epsCurrentYear", 0.0),
-                            jsonObject.optDouble("epsNextYear", 0.0),
-                            jsonObject.optDouble("epsYear3", 0.0),
-                            jsonObject.optDouble("debtToEquity", 0.0),
-                            jsonObject.optDouble("epsGrowth1", 0.0),
-                            jsonObject.optDouble("currentRatio", 0.0),
-                            jsonObject.optDouble("quickRatio", 0.0),
-                            jsonObject.optDouble("epsGrowth2", 0.0),
-                            jsonObject.optDouble("epsGrowth3", 0.0),
-                            jsonObject.optDouble("deAvg", 0.0),
-                            jsonObject.optString("industry", "N/A"),
-                            jsonObject.optDouble("roeAvg", 0.0),
-                            jsonObject.optDouble("priceToFCF_TTM", 0.0),
-                            jsonObject.optDouble("priceToFCF_Avg", 0.0),
-                            jsonObject.optDouble("peForward1", 0.0),
-                            jsonObject.optDouble("peForward2", 0.0),
-                            jsonObject.optDouble("peForward3", 0.0),
-                            jsonObject.optDouble("volatility", 0.0),};
+                        jsonObject.optString("name", ""),
+                        jsonObject.optString("ticker", "").toUpperCase(),
+                        jsonObject.optDouble("price", 0.0),
+                        jsonObject.optDouble("peTtm", 0.0),
+                        jsonObject.optDouble("pbTtm", 0.0),
+                        jsonObject.optDouble("dividendYield", 0.0),
+                        jsonObject.optDouble("payoutRatio", 0.0),
+                        jsonObject.optDouble("grahamNumber", 0.0),
+                        jsonObject.optDouble("pbAvg", 0.0),
+                        jsonObject.optDouble("peAvg", 0.0),
+                        jsonObject.optDouble("epsTtm", 0.0),
+                        jsonObject.optDouble("roeTtm", 0.0),
+                        jsonObject.optDouble("aScore", 0.0),
+                        jsonObject.optDouble("epsCurrentYear", 0.0),
+                        jsonObject.optDouble("epsNextYear", 0.0),
+                        jsonObject.optDouble("epsYear3", 0.0),
+                        jsonObject.optDouble("debtToEquity", 0.0),
+                        jsonObject.optDouble("epsGrowth1", 0.0),
+                        jsonObject.optDouble("currentRatio", 0.0),
+                        jsonObject.optDouble("quickRatio", 0.0),
+                        jsonObject.optDouble("epsGrowth2", 0.0),
+                        jsonObject.optDouble("epsGrowth3", 0.0),
+                        jsonObject.optDouble("deAvg", 0.0),
+                        jsonObject.optString("industry", "N/A"),
+                        jsonObject.optDouble("roeAvg", 0.0),
+                        jsonObject.optDouble("priceToFCF_TTM", 0.0),
+                        jsonObject.optDouble("priceToFCF_Avg", 0.0),
+                        jsonObject.optDouble("peForward1", 0.0),
+                        jsonObject.optDouble("peForward2", 0.0),
+                        jsonObject.optDouble("peForward3", 0.0),
+                        jsonObject.optDouble("volatility", 0.0),
+                        jsonObject.optDouble("payoutRatioAvg", 0.0),
+                    
+                    };
+                    
                     tableModel.addRow(rowData);
                     System.out.println("Added stock: " + jsonObject.optString("ticker", "")
                             + " with price: " + jsonObject.optDouble("price", 0.0));
@@ -407,6 +468,7 @@ public class Watchlist {
             jsonObject.put("peForward2", tableModel.getValueAt(i, 28));
             jsonObject.put("peForward3", tableModel.getValueAt(i, 29));
             jsonObject.put("volatility", tableModel.getValueAt(i, 30));
+             jsonObject.put("payoutRatioAvg", tableModel.getValueAt(i, 31));
             jsonArray.put(jsonObject);
         }
 
@@ -608,8 +670,8 @@ public class Watchlist {
                 double aScore = 0;
 
                 Object[] rowData = new Object[]{
-                        name, ticker, price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
-                        epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg, industry,};
+                    name, ticker, price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
+                    epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg, industry,};
 
                 tableModel.addRow(rowData);
                 System.out.println("Added stock: " + ticker + " deAvg" + deAvg);
@@ -724,20 +786,23 @@ public class Watchlist {
                             double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                             double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
                             double epsGrowth3 = calculateEpsGrowth3(epsYear3, epsNextYear);
-                            //* double pbAvg = fetchAveragePB(ticker);
+                            double pbAvg = fetchAveragePB(ticker);
                             double peForward1 = calculatePEForward(price, epsCurrentYear);
                             double peForward2 = calculatePEForward(price, epsNextYear);
                             double peForward3 = calculatePEForward(price, epsYear3);
-                            //* double peAvg = fetchAveragePE(ticker);
+                            double peAvg = fetchAveragePE(ticker);
                             double priceToFCF_TTM = TTM_Ratios.getPriceToFreeCashFlowRatioTTM(ticker);
-                            //* double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
-                            //* double roeAvg = fetchAverageROE(ticker);
-                            //* double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
-                            //* double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
+                            double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
+                            double roeAvg = fetchAverageROE(ticker);
+                            double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
+                            double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
                             String industry = CompanyOverview.fetchIndustry(ticker);
-                            //* double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatio, quickRatio, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg);
+                            double prAvg = Ratios.fetchPayoutRatioAverage(ticker); 
+                            double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatio,
+                                                            quickRatio, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
                             double volatilityScore = Analytics.calculateVolatilityScore(ticker);
-                            //*System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
+                             
+                            System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
 
                             SwingUtilities.invokeLater(() -> {
                                 tableModel.setValueAt(price, modelRow, 2);
@@ -745,12 +810,12 @@ public class Watchlist {
                                 tableModel.setValueAt(pbTtm, modelRow, 4);
                                 tableModel.setValueAt(dividendYieldTTM, modelRow, 5);
                                 tableModel.setValueAt(payoutRatio, modelRow, 6);
-                                //* tableModel.setValueAt(grahamNumber, modelRow, 7);
-                                //*tableModel.setValueAt(pbAvg, modelRow, 8); // PB Avg
-                                //* tableModel.setValueAt(peAvg, modelRow, 9); // PE Avg
+                                tableModel.setValueAt(grahamNumber, modelRow, 7);
+                                tableModel.setValueAt(pbAvg, modelRow, 8); // PB Avg
+                                tableModel.setValueAt(peAvg, modelRow, 9); // PE Avg
                                 tableModel.setValueAt(epsTtm, modelRow, 10);
                                 tableModel.setValueAt(roeTtm, modelRow, 11);
-                                //* tableModel.setValueAt(aScore, modelRow, 12);
+                                tableModel.setValueAt(aScore, modelRow, 12);
                                 tableModel.setValueAt(epsCurrentYear, modelRow, 13);
                                 tableModel.setValueAt(epsNextYear, modelRow, 14);
                                 tableModel.setValueAt(epsYear3, modelRow, 15);
@@ -760,15 +825,16 @@ public class Watchlist {
                                 tableModel.setValueAt(quickRatio, modelRow, 19); // Index of the new "Quick Ratio" column
                                 tableModel.setValueAt(epsGrowth2, modelRow, 20);
                                 tableModel.setValueAt(epsGrowth3, modelRow, 21);
-                                //*tableModel.setValueAt(deAvg, modelRow, 22);
+                                tableModel.setValueAt(deAvg, modelRow, 22);
                                 tableModel.setValueAt(industry, modelRow, 23);
-                                //* tableModel.setValueAt(roeAvg, modelRow, 24); // ROE Avg
+                                tableModel.setValueAt(roeAvg, modelRow, 24); // ROE Avg
                                 tableModel.setValueAt(priceToFCF_TTM, modelRow, 25);
-                                //*tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
+                                tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
                                 tableModel.setValueAt(peForward1, modelRow, 27);
                                 tableModel.setValueAt(peForward2, modelRow, 28);
                                 tableModel.setValueAt(peForward3, modelRow, 29);
                                 tableModel.setValueAt(volatilityScore, modelRow, 30);
+                                tableModel.setValueAt(prAvg, modelRow, 31);
 
                             });
 
@@ -803,6 +869,157 @@ public class Watchlist {
 
         worker.execute();
     }
+    
+    // Add this new method to handle refreshing a single stock
+
+private void refreshSingleStock(String ticker, int modelRow) {
+    System.out.println("Starting single stock refresh for: " + ticker);
+    
+    // Create progress indicator
+    JDialog progressDialog = new JDialog();
+    progressDialog.setTitle("Refreshing " + ticker);
+    progressDialog.setSize(250, 100);
+    progressDialog.setLayout(new BorderLayout());
+    progressDialog.setLocationRelativeTo(watchlistTable);
+    
+    JProgressBar progressBar = new JProgressBar();
+    progressBar.setIndeterminate(true);
+    JLabel statusLabel = new JLabel("  Fetching data for " + ticker + "...");
+    statusLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+    
+    progressDialog.add(statusLabel, BorderLayout.NORTH);
+    progressDialog.add(progressBar, BorderLayout.CENTER);
+    progressDialog.setModal(false);
+    progressDialog.setVisible(true);
+    
+    SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
+        @Override
+        protected Void doInBackground() {
+            try {
+                JSONObject stockData = fetchStockData(ticker);
+                JSONObject ratios = fetchStockRatios(ticker);
+                JSONObject epsEstimates = Estimates.fetchEpsEstimates(ticker);
+
+                if (stockData != null) {
+                    final double price = convertGbxToGbp(round(stockData.getDouble("price"), 2), ticker);
+                    double peTtm = round(ratios.optDouble("peRatioTTM", 0.0), 2);
+                    double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
+                    double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
+                    double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
+                    double dividendYieldTTM = KeyMetricsTTM.getDividendYieldTTM(ticker);
+                    double payoutRatio = round(ratios.optDouble("payoutRatioTTM", 0.0), 2);
+                    double debtToEquity = KeyMetricsTTM.getDebtToEquityTTM(ticker);
+                    double epsCurrentYear = epsEstimates != null
+                            ? round(epsEstimates.optDouble("eps0", 0.0), 2)
+                            : 0.0;
+                    double epsNextYear = epsEstimates != null
+                            ? round(epsEstimates.optDouble("eps1", 0.0), 2)
+                            : 0.0;
+                    double epsYear3 = epsEstimates != null
+                            ? round(epsEstimates.optDouble("eps2", 0.0), 2)
+                            : 0.0;
+                    double currentRatio = ratios != null
+                            ? round(ratios.optDouble("currentRatioTTM", 0.0), 2)
+                            : 0.0;
+                    double quickRatio = ratios != null
+                            ? round(ratios.optDouble("quickRatioTTM", 0.0), 2)
+                            : 0.0;
+
+                    // Calculate all other metrics (same as in refreshWatchlist)
+                    double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
+                    double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
+                    double epsGrowth3 = calculateEpsGrowth3(epsYear3, epsNextYear);
+                    double pbAvg = fetchAveragePB(ticker);
+                    double peForward1 = calculatePEForward(price, epsCurrentYear);
+                    double peForward2 = calculatePEForward(price, epsNextYear);
+                    double peForward3 = calculatePEForward(price, epsYear3);
+                    double peAvg = fetchAveragePE(ticker);
+                    double priceToFCF_TTM = TTM_Ratios.getPriceToFreeCashFlowRatioTTM(ticker);
+                    double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
+                    double roeAvg = fetchAverageROE(ticker);
+                    double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
+                    double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
+                    String industry = CompanyOverview.fetchIndustry(ticker);
+                    double prAvg = Ratios.fetchPayoutRatioAverage(ticker); 
+                    double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, 
+                                                   roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, 
+                                                   epsGrowth2, epsGrowth3, currentRatio, quickRatio, 
+                                                   grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
+                    double volatilityScore = Analytics.calculateVolatilityScore(ticker);
+                         
+                    System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
+
+                    SwingUtilities.invokeLater(() -> {
+                        // Update all the cells with new data, same as in refreshWatchlist
+                        tableModel.setValueAt(price, modelRow, 2);
+                        tableModel.setValueAt(peTtm, modelRow, 3);
+                        tableModel.setValueAt(pbTtm, modelRow, 4);
+                        tableModel.setValueAt(dividendYieldTTM, modelRow, 5);
+                        tableModel.setValueAt(payoutRatio, modelRow, 6);
+                        tableModel.setValueAt(grahamNumber, modelRow, 7);
+                        tableModel.setValueAt(pbAvg, modelRow, 8);
+                        tableModel.setValueAt(peAvg, modelRow, 9);
+                        tableModel.setValueAt(epsTtm, modelRow, 10);
+                        tableModel.setValueAt(roeTtm, modelRow, 11);
+                        tableModel.setValueAt(aScore, modelRow, 12);
+                        tableModel.setValueAt(epsCurrentYear, modelRow, 13);
+                        tableModel.setValueAt(epsNextYear, modelRow, 14);
+                        tableModel.setValueAt(epsYear3, modelRow, 15);
+                        tableModel.setValueAt(debtToEquity, modelRow, 16);
+                        tableModel.setValueAt(epsGrowth1, modelRow, 17);
+                        tableModel.setValueAt(currentRatio, modelRow, 18);
+                        tableModel.setValueAt(quickRatio, modelRow, 19);
+                        tableModel.setValueAt(epsGrowth2, modelRow, 20);
+                        tableModel.setValueAt(epsGrowth3, modelRow, 21);
+                        tableModel.setValueAt(deAvg, modelRow, 22);
+                        tableModel.setValueAt(industry, modelRow, 23);
+                        tableModel.setValueAt(roeAvg, modelRow, 24);
+                        tableModel.setValueAt(priceToFCF_TTM, modelRow, 25);
+                        tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
+                        tableModel.setValueAt(peForward1, modelRow, 27);
+                        tableModel.setValueAt(peForward2, modelRow, 28);
+                        tableModel.setValueAt(peForward3, modelRow, 29);
+                        tableModel.setValueAt(volatilityScore, modelRow, 30);
+                        tableModel.setValueAt(prAvg, modelRow, 31);
+
+                        progressDialog.dispose();
+                        saveWatchlist();
+                        
+                        JOptionPane.showMessageDialog(
+                            watchlistTable,
+                            ticker + " data refreshed successfully!",
+                            "Stock Refresh Complete",
+                            JOptionPane.INFORMATION_MESSAGE);
+                    });
+
+                    System.out.println("Refreshed single stock data: " + ticker);
+                } else {
+                    SwingUtilities.invokeLater(() -> {
+                        progressDialog.dispose();
+                        JOptionPane.showMessageDialog(
+                            watchlistTable,
+                            "Could not refresh data for " + ticker,
+                            "Refresh Failed",
+                            JOptionPane.ERROR_MESSAGE);
+                    });
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                SwingUtilities.invokeLater(() -> {
+                    progressDialog.dispose();
+                    JOptionPane.showMessageDialog(
+                        watchlistTable,
+                        "Error refreshing " + ticker + ": " + e.getMessage(),
+                        "Refresh Error",
+                        JOptionPane.ERROR_MESSAGE);
+                });
+            }
+            return null;
+        }
+    };
+    
+    worker.execute();
+}
 
     private void deleteStock() {
         int selectedRow = watchlistTable.getSelectedRow();
@@ -987,13 +1204,9 @@ public class Watchlist {
                 for (int i = 0; i < data.length(); i++) {
                     JSONObject metrics = data.getJSONObject(i);
                     double peRatio = metrics.optDouble("peRatio", 0.0);
-                    if (peRatio != 0.0) {  // Include all non-zero PE ratios
-                        // Cap PE ratios: positive at 30, negative at -30
-                        if (peRatio > 0) {
-                            peRatio = Math.min(peRatio, 30.0);
-                        } else {
-                            peRatio = Math.max(peRatio, -30.0);
-                        }
+                     if (peRatio > 0.0) {  // Only include positive PE ratios
+                    // Cap PE ratios at 30
+                        peRatio = Math.min(peRatio, 30.0);
                         sum += peRatio;
                         count++;
                     }
@@ -1070,8 +1283,8 @@ public class Watchlist {
     }
 
     private double calculateAScore(double pbAvg, double pbTtm, double peAvg, double peTtm, double payoutRatio, double debtToEquity,
-                                   double roe, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
-                                   double currentRatio, double quickRatio, double grahamNumberTerm, double price, double priceToFCF_TTM, double priceToFCF_AVG) {
+            double roe, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
+            double currentRatio, double quickRatio, double grahamNumberTerm, double price, double priceToFCF_TTM, double priceToFCF_AVG, double prAvg) {
         double peRatioTerm = 0;
         double pbRatioTerm = 0;
         double payoutRatioTerm = 0;
@@ -1086,6 +1299,7 @@ public class Watchlist {
         double currentRatioTerm = 0;
         double quickRatioTerm = 0;
         double pfcfTerm = 0;
+        double prAvgTerm = 0;
 
 // Conditions for debt to Equity
         if (debtToEquity == 0 || deAvg == 0.0) {
@@ -1124,11 +1338,11 @@ public class Watchlist {
         if (priceToFCF_TTM <= 0) {
             pfcfTerm = -2;  // Penalty for negative FCF
         } else if (priceToFCF_AVG / priceToFCF_TTM < 1) {
-            pfcfTerm = -1;    // Current PFCF is higher than average (potentially overvalued)
+            pfcfTerm = -1;  // Current PFCF is higher than average (potentially overvalued)
         } else if (priceToFCF_AVG / priceToFCF_TTM >= 1 && priceToFCF_AVG / priceToFCF_TTM < 1.5) {
-            pfcfTerm = 1;      // Current PFCF is lower than average but not significantly
+            pfcfTerm = 1;   // Current PFCF is lower than average but not significantly
         } else if (priceToFCF_AVG / priceToFCF_TTM >= 1.5) {
-            pfcfTerm = 2;      // Current PFCF is significantly lower than average (potentially undervalued)
+            pfcfTerm = 2;   // Current PFCF is significantly lower than average (potentially undervalued)
         }
 
         // Conditions for dividendYieldTerm
@@ -1206,7 +1420,7 @@ public class Watchlist {
             epsGrowth2Term = 2;
         }
 
-        // Conditions for epsGrowht2
+        // Conditions for epsGrowht3
         if (epsGrowth3 <= -25) {
             epsGrowth3Term = -2;
         } else if (epsGrowth3 > -25 && epsGrowth3 <= 0) {
@@ -1251,10 +1465,21 @@ public class Watchlist {
         } else if (quickRatio >= 2) {
             quickRatioTerm = 2;
         }
+        
+         // Conditions for prAvgTerm calculation
+    if (prAvg > 0 && payoutRatio >= 0) {
+        if (payoutRatio < 0.5 * prAvg) {
+            prAvgTerm = 2;  // payoutratio < 50% prAvg
+        } else if (payoutRatio < prAvg) {
+            prAvgTerm = 1;  // 50% prAvg <= payoutratio < 100% prAvg
+        } else {
+            prAvgTerm = 0;  // payoutratio >= 100% prAvg
+        }
+    }
 
         return (payoutRatioTerm + deAvgTerm + debtToEquityTerm + dividendYieldTerm + peRatioTerm + pbRatioTerm
                 + payoutRatioTerm + epsGrowth1Term + epsGrowth3Term + epsGrowth2Term + currentRatioTerm
-                + quickRatioTerm + roeTerm + roeAvgTerm + grahamNumberTerm + pfcfTerm);
+                + quickRatioTerm + roeTerm + roeAvgTerm + grahamNumberTerm + pfcfTerm + prAvgTerm);
 
     }
 

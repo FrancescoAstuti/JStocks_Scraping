@@ -1,8 +1,7 @@
 package afin.jstocks;
 
-import org.jfree.chart.ChartPanel;
 import javax.swing.*;
-import java.awt.BorderLayout;
+import java.awt.*;
 import java.util.ArrayList;
 
 public class Main {
@@ -25,13 +24,25 @@ public class Main {
         overviewFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         overviewFrame.setSize(800, 600);
 
-        GUI gui = new GUI(stockLots);
-        ChartPanel chartPanel = gui.createChartPanel();
+        // Add buttons for navigation
+        JButton watchlistButton = new JButton("Watchlist");
+        watchlistButton.addActionListener(e -> {
+            overviewFrame.setVisible(false); // Hide overview window
+            SwingUtilities.invokeLater(() -> {
+                Watchlist watchlist = new Watchlist();
+                watchlist.createAndShowGUI();
+                overviewFrame.setVisible(true); // Restore overview window after Watchlist closes
+            });
+        });
 
         JButton portfolioButton = new JButton("Portfolio");
         portfolioButton.addActionListener(e -> {
-            overviewFrame.dispose();
-            gui.createAndShowGUI();
+            overviewFrame.setVisible(false); // Hide overview window
+            SwingUtilities.invokeLater(() -> {
+                Portfolio portfolio = new Portfolio(stockLots);
+                portfolio.createAndShowPortfolio();
+                overviewFrame.setVisible(true); // Restore overview window after Portfolio closes
+            });
         });
 
         JButton stockScreenerButton = new JButton("Stock Screener");
@@ -40,26 +51,11 @@ public class Main {
             stockScreener.createAndShowGUI();
         });
 
-        JButton watchlistButton = new JButton("Watchlist");
-        watchlistButton.addActionListener(e -> {
-            Watchlist watchlist = new Watchlist();
-            watchlist.createAndShowGUI();
-        });
-
-        JPanel timeFramePanel = new JPanel();
-        String[] timeFrames = {"1W", "1M", "2M", "3M", "6M", "1Y"};
-        for (String timeFrame : timeFrames) {
-            JButton button = new JButton(timeFrame);
-            button.addActionListener(e -> gui.updateChart(timeFrame));
-            timeFramePanel.add(button);
-        }
-
+        // Main panel layout
         JPanel panel = new JPanel(new BorderLayout());
-        panel.add(timeFramePanel, BorderLayout.NORTH);
-        panel.add(chartPanel, BorderLayout.CENTER);
-        panel.add(portfolioButton, BorderLayout.SOUTH);
-        panel.add(stockScreenerButton, BorderLayout.EAST);
         panel.add(watchlistButton, BorderLayout.WEST);
+        panel.add(portfolioButton, BorderLayout.CENTER);
+        panel.add(stockScreenerButton, BorderLayout.EAST);
 
         overviewFrame.add(panel);
         overviewFrame.setLocationRelativeTo(null);
