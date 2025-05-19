@@ -185,6 +185,16 @@ refreshStockItem.addActionListener(e -> {
 });
 popupMenu.add(refreshStockItem);
 
+JMenuItem clearStockItem = new JMenuItem("Clear Stock Values");
+clearStockItem.addActionListener(e -> {
+    int row = watchlistTable.getSelectedRow();
+    if (row != -1) {
+        int modelRow = watchlistTable.convertRowIndexToModel(row);
+        clearStockValues(modelRow);
+    }
+});
+popupMenu.add(clearStockItem);
+
 // Replace the existing mouse listener with this one that handles both left-click and right-click
 watchlistTable.addMouseListener(new MouseAdapter() {
     @Override
@@ -1019,6 +1029,37 @@ private void refreshSingleStock(String ticker, int modelRow) {
     };
     
     worker.execute();
+}
+
+// Method to clear all numerical values of a stock
+private void clearStockValues(int modelRow) {
+    // Confirm with the user first
+    String ticker = (String) tableModel.getValueAt(modelRow, 1);
+    int confirm = JOptionPane.showConfirmDialog(
+            watchlistTable,
+            "Are you sure you want to clear all values for " + ticker + "?",
+            "Confirm Clear",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.QUESTION_MESSAGE);
+    
+    if (confirm == JOptionPane.YES_OPTION) {
+        // Keep the name and ticker, set all numerical values to 0.0
+        for (int col = 2; col < tableModel.getColumnCount(); col++) {
+            if (tableModel.getColumnClass(col) == Double.class) {
+                tableModel.setValueAt(0.0, modelRow, col);
+            } else if (col == 23) { // Industry column
+                tableModel.setValueAt("N/A", modelRow, col);
+            }
+        }
+        
+        // Save the updated watchlist
+        saveWatchlist();
+        JOptionPane.showMessageDialog(
+                watchlistTable,
+                "Values for " + ticker + " have been cleared.",
+                "Clear Complete",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
 }
 
     private void deleteStock() {

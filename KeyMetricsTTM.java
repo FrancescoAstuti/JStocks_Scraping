@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 public class KeyMetricsTTM {
-    private static final String API_KEY = "BLABLA_eb7366217370656d66a56a057b8511b0";
+    private static final String API_KEY = "eb7366217370656d66a56a057b8511b0";
    // private static final String API_URL_RatiosTTM = "https://financialmodelingprep.com/api/v3/ratios-ttm/";
     private static final String API_URL_KeyMetricsTTM = "https://financialmodelingprep.com/api/v3/key-metrics-ttm/";
 

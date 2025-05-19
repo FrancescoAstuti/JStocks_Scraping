@@ -8,7 +8,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class GetPrice {
-    private static final String API_KEY = "BLABLA_eb7366217370656d66a56a057b8511b0";
+    private static final String API_KEY = "eb7366217370656d66a56a057b8511b0";
 
     public static Double getCurrentPrice(String ticker) {
         String urlString = String.format("https://financialmodelingprep.com/api/v3/quote/%s?apikey=%s", ticker, API_KEY);
