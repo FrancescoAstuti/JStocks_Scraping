@@ -672,7 +672,7 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                 double debtToEquity = KeyMetricsTTM.getDebtToEquityTTM(ticker);
                 double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                 double currentRatio = ratios.optDouble("currentRatioTTM", 0.0);
-                double quickRatio = ratios.optDouble("quickRatioTTM", 0.0);
+                double quickRatio = 0;
                 double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
                 double epsGrowth3 = calculateEpsGrowth2(epsNextYear, epsYear3);
                 double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
@@ -786,12 +786,8 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                             double epsYear3 = epsEstimates != null
                                     ? round(epsEstimates.optDouble("eps2", 0.0), 2)
                                     : 0.0;
-                            double currentRatio = ratios != null
-                                    ? round(ratios.optDouble("currentRatioTTM", 0.0), 2)
-                                    : 0.0;
-                            double quickRatio = ratios != null
-                                    ? round(ratios.optDouble("quickRatioTTM", 0.0), 2)
-                                    : 0.0;
+                            double currentRatio = KeyMetricsTTM.fetchCurrentRatio(ticker);
+                            double quickRatio = 0;
 
                             double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                             double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
@@ -890,7 +886,8 @@ private void refreshSingleStock(String ticker, int modelRow) {
     progressDialog.setTitle("Refreshing " + ticker);
     progressDialog.setSize(250, 100);
     progressDialog.setLayout(new BorderLayout());
-    progressDialog.setLocationRelativeTo(watchlistTable);
+    // Center the progress dialog on the screen instead of relative to watchlistTable
+    progressDialog.setLocationRelativeTo(null);
     
     JProgressBar progressBar = new JProgressBar();
     progressBar.setIndeterminate(true);
@@ -928,12 +925,8 @@ private void refreshSingleStock(String ticker, int modelRow) {
                     double epsYear3 = epsEstimates != null
                             ? round(epsEstimates.optDouble("eps2", 0.0), 2)
                             : 0.0;
-                    double currentRatio = ratios != null
-                            ? round(ratios.optDouble("currentRatioTTM", 0.0), 2)
-                            : 0.0;
-                    double quickRatio = ratios != null
-                            ? round(ratios.optDouble("quickRatioTTM", 0.0), 2)
-                            : 0.0;
+                    double currentRatio = KeyMetricsTTM.fetchCurrentRatio(ticker);
+                    double quickRatio = 0;
 
                     // Calculate all other metrics (same as in refreshWatchlist)
                     double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
@@ -995,33 +988,47 @@ private void refreshSingleStock(String ticker, int modelRow) {
                         progressDialog.dispose();
                         saveWatchlist();
                         
-                        JOptionPane.showMessageDialog(
-                            watchlistTable,
+                        // Create a centered message dialog
+                        JOptionPane successPane = new JOptionPane(
                             ticker + " data refreshed successfully!",
-                            "Stock Refresh Complete",
                             JOptionPane.INFORMATION_MESSAGE);
+                        
+                        JDialog successDialog = successPane.createDialog("Stock Refresh Complete");
+                        // Center the success dialog on screen
+                        successDialog.setLocationRelativeTo(null);
+                        successDialog.setVisible(true);
                     });
 
                     System.out.println("Refreshed single stock data: " + ticker);
                 } else {
                     SwingUtilities.invokeLater(() -> {
                         progressDialog.dispose();
-                        JOptionPane.showMessageDialog(
-                            watchlistTable,
+                        
+                        // Create a centered error dialog
+                        JOptionPane errorPane = new JOptionPane(
                             "Could not refresh data for " + ticker,
-                            "Refresh Failed",
                             JOptionPane.ERROR_MESSAGE);
+                        
+                        JDialog errorDialog = errorPane.createDialog("Refresh Failed");
+                        // Center the error dialog on screen
+                        errorDialog.setLocationRelativeTo(null);
+                        errorDialog.setVisible(true);
                     });
                 }
             } catch (Exception e) {
                 e.printStackTrace();
                 SwingUtilities.invokeLater(() -> {
                     progressDialog.dispose();
-                    JOptionPane.showMessageDialog(
-                        watchlistTable,
+                    
+                    // Create a centered exception dialog
+                    JOptionPane exceptionPane = new JOptionPane(
                         "Error refreshing " + ticker + ": " + e.getMessage(),
-                        "Refresh Error",
                         JOptionPane.ERROR_MESSAGE);
+                    
+                    JDialog exceptionDialog = exceptionPane.createDialog("Refresh Error");
+                    // Center the exception dialog on screen
+                    exceptionDialog.setLocationRelativeTo(null);
+                    exceptionDialog.setVisible(true);
                 });
             }
             return null;
@@ -1035,30 +1042,52 @@ private void refreshSingleStock(String ticker, int modelRow) {
 private void clearStockValues(int modelRow) {
     // Confirm with the user first
     String ticker = (String) tableModel.getValueAt(modelRow, 1);
-    int confirm = JOptionPane.showConfirmDialog(
-            watchlistTable,
-            "Are you sure you want to clear all values for " + ticker + "?",
-            "Confirm Clear",
-            JOptionPane.YES_NO_OPTION,
-            JOptionPane.QUESTION_MESSAGE);
     
-    if (confirm == JOptionPane.YES_OPTION) {
-        // Keep the name and ticker, set all numerical values to 0.0
-        for (int col = 2; col < tableModel.getColumnCount(); col++) {
-            if (tableModel.getColumnClass(col) == Double.class) {
-                tableModel.setValueAt(0.0, modelRow, col);
-            } else if (col == 23) { // Industry column
-                tableModel.setValueAt("N/A", modelRow, col);
-            }
-        }
+    // Get the parent frame for proper centering
+    Frame frame = JOptionPane.getFrameForComponent(watchlistTable);
+    
+    // Create and configure the confirmation dialog
+    JOptionPane optionPane = new JOptionPane(
+            "Are you sure you want to clear all values for " + ticker + "?",
+            JOptionPane.QUESTION_MESSAGE,
+            JOptionPane.YES_NO_OPTION);
+    
+    // Create a dialog with the option pane
+    JDialog dialog = optionPane.createDialog(frame, "Confirm Clear");
+    
+    // Center the dialog on the screen
+    dialog.setLocationRelativeTo(null);
+    
+    // Show the dialog and get the result
+    dialog.setVisible(true);
+    
+    // Process the user's response
+    Object selectedValue = optionPane.getValue();
+    if (selectedValue != null && selectedValue instanceof Integer) {
+        int confirm = ((Integer) selectedValue).intValue();
         
-        // Save the updated watchlist
-        saveWatchlist();
-        JOptionPane.showMessageDialog(
-                watchlistTable,
-                "Values for " + ticker + " have been cleared.",
-                "Clear Complete",
-                JOptionPane.INFORMATION_MESSAGE);
+        if (confirm == JOptionPane.YES_OPTION) {
+            // Keep the name and ticker, set all numerical values to 0.0
+            for (int col = 2; col < tableModel.getColumnCount(); col++) {
+                if (tableModel.getColumnClass(col) == Double.class) {
+                    tableModel.setValueAt(0.0, modelRow, col);
+                } else if (col == 23) { // Industry column
+                    tableModel.setValueAt("N/A", modelRow, col);
+                }
+            }
+            
+            // Save the updated watchlist
+            saveWatchlist();
+            
+            // Create and show a centered completion message
+            JOptionPane completionPane = new JOptionPane(
+                    "Values for " + ticker + " have been cleared.",
+                    JOptionPane.INFORMATION_MESSAGE);
+            
+            JDialog completionDialog = completionPane.createDialog(frame, "Clear Complete");
+            completionDialog.setLocationRelativeTo(null);
+            completionDialog.setVisible(true);
+        }
     }
 }
 

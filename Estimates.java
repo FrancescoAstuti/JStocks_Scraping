@@ -7,7 +7,10 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Calendar;
+import java.util.Locale;
 
 public class Estimates {
 
@@ -151,43 +154,49 @@ public class Estimates {
                     
                     // Get the estimates based on indices
                     if (cells.size() > Math.max(currentYearIndex, nextYearIndex)) {
-                        // Current year estimate (adjusted to match the cell index)
-                        String currentYearEps = cells.get(currentYearIndex).text().trim();
-                        double currentYearValue = parseDouble(currentYearEps);
-                        result.put("eps0", currentYearValue);
-                        
-                        // Next year estimate (adjusted to match the cell index)
-                        String nextYearEps = cells.get(nextYearIndex).text().trim();
-                        double nextYearValue = parseDouble(nextYearEps);
-                        result.put("eps1", nextYearValue);
-                        
-                        // Calculate growth rate for year 3 (assuming similar growth)
-                        if (currentYearValue > 0 && nextYearValue > 0) {
-                            double growthRate = (nextYearValue - currentYearValue) / currentYearValue;
-                            double year3Value = nextYearValue * (1 + growthRate);
-                            result.put("eps2", Double.parseDouble(String.format("%.2f", year3Value)));
-                        } else {
-                            result.put("eps2", 0.0);
-                        }
-                        
-                        // Add quarters if available
-                        if (cells.size() >= 3) {
-                            String currentQtrEps = cells.get(1).text().trim();
-                            result.put("currentQtr", parseDouble(currentQtrEps));
+                        try {
+                            // Current year estimate (adjusted to match the cell index)
+                            String currentYearEps = cells.get(currentYearIndex).text().trim();
+                            double currentYearValue = parseDouble(currentYearEps);
+                            result.put("eps0", currentYearValue);
                             
-                            String nextQtrEps = cells.get(2).text().trim();
-                            result.put("nextQtr", parseDouble(nextQtrEps));
+                            // Next year estimate (adjusted to match the cell index)
+                            String nextYearEps = cells.get(nextYearIndex).text().trim();
+                            double nextYearValue = parseDouble(nextYearEps);
+                            result.put("eps1", nextYearValue);
+                            
+                            // Calculate growth rate for year 3 (assuming similar growth)
+                            if (currentYearValue > 0 && nextYearValue > 0) {
+                                double growthRate = (nextYearValue - currentYearValue) / currentYearValue;
+                                double year3Value = nextYearValue * (1 + growthRate);
+                                result.put("eps2", round(year3Value, 2));
+                            } else {
+                                result.put("eps2", 0.0);
+                            }
+                            
+                            // Add quarters if available
+                            if (cells.size() >= 3) {
+                                String currentQtrEps = cells.get(1).text().trim();
+                                result.put("currentQtr", parseDouble(currentQtrEps));
+                                
+                                String nextQtrEps = cells.get(2).text().trim();
+                                result.put("nextQtr", parseDouble(nextQtrEps));
+                            }
+                            
+                            // Add the year information
+                            result.put("currentYear", currentYear);
+                            result.put("nextYear", nextYear);
+                            
+                            System.out.println("Successfully fetched Yahoo Finance EPS estimates for " + ticker);
+                            System.out.println("Current Year EPS: " + currentYearValue);
+                            System.out.println("Next Year EPS: " + nextYearValue);
+                            
+                            return result;
+                        } catch (Exception e) {
+                            System.err.println("Error processing data for " + ticker + ": " + e.getMessage());
+                            e.printStackTrace();
+                            return new JSONObject();
                         }
-                        
-                        // Add the year information
-                        result.put("currentYear", currentYear);
-                        result.put("nextYear", nextYear);
-                        
-                        System.out.println("Successfully fetched Yahoo Finance EPS estimates for " + ticker);
-                        System.out.println("Current Year EPS: " + currentYearValue);
-                        System.out.println("Next Year EPS: " + nextYearValue);
-                        
-                        return result;
                     }
                 }
             }
@@ -226,27 +235,61 @@ public class Estimates {
         return 0;
     }
     
-    // Helper method to parse double values from text, handling non-numeric characters
-// Helper method to parse double values from text, handling different locale decimal separators
-// Helper method to parse double values from text, handling different locale decimal separators
-// In the parseDouble method in Estimates.java
-private static double parseDouble(String value) {
-    try {
-        System.out.println("Attempting to parse: '" + value + "'");
-        // Check if the value contains a comma
-        if (value.contains(",")) {
-            System.out.println("Found comma in value: '" + value + "', replacing with period");
-            value = value.replace(',', '.');
+    // Improved helper method to parse double values from text, handling different locale decimal separators
+    private static double parseDouble(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0.0;
         }
         
-        // Remove any non-numeric characters except decimal point and minus sign
-        String cleanValue = value.replaceAll("[^0-9.-]", "");
-        
-        return Double.parseDouble(cleanValue);
-    } catch (NumberFormatException e) {
-        System.err.println("Failed to parse value: '" + value + "' - " + e.getMessage());
-        e.printStackTrace();
-        return 0.0;
+        try {
+            // Make a copy of the original value for logging
+            String originalValue = value;
+            System.out.println("Attempting to parse: '" + originalValue + "'");
+            
+            // Always replace commas with periods to handle both locale formats
+            value = value.replace(',', '.');
+            
+            // Remove any non-numeric characters except decimal point and minus sign
+            String cleanValue = value.replaceAll("[^0-9.-]", "");
+            System.out.println("Cleaned value for parsing: '" + cleanValue + "'");
+            
+            // If we ended up with an empty string, return 0
+            if (cleanValue.isEmpty()) {
+                return 0.0;
+            }
+            
+            // Ensure US locale is used to parse the number
+            double result = Double.parseDouble(cleanValue);
+            System.out.println("Successfully parsed '" + originalValue + "' to " + result);
+            return result;
+        } catch (NumberFormatException e) {
+            System.err.println("Failed to parse value: '" + value + "' - " + e.getMessage());
+            
+            // Try an alternate approach with explicit locale
+            try {
+                java.text.NumberFormat format = java.text.NumberFormat.getInstance(Locale.US);
+                Number number = format.parse(value.replace(',', '.'));
+                return number.doubleValue();
+            } catch (Exception ex) {
+                System.err.println("Second parsing attempt also failed: " + ex.getMessage());
+                return 0.0;
+            }
+        }
     }
-}
+    
+    // Safe rounding method that doesn't use string formatting
+    private static double round(double value, int places) {
+        if (places < 0) {
+            throw new IllegalArgumentException("Cannot round to negative decimal places");
+        }
+        
+        try {
+            BigDecimal bd = BigDecimal.valueOf(value);
+            bd = bd.setScale(places, RoundingMode.HALF_UP);
+            return bd.doubleValue();
+        } catch (Exception e) {
+            System.err.println("Error rounding value: " + e.getMessage());
+            return value; // Return original value if rounding fails
+        }
+    }
 }
