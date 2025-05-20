@@ -642,7 +642,7 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                     System.out.println("Stock data fetched for ticker: " + ticker);
                 }
 
-                JSONObject ratios = fetchStockRatios(ticker);
+               /* JSONObject ratios = fetchStockRatios(ticker);
                 if (ratios == null) {
                     JOptionPane.showMessageDialog(null,
                             "Financial data not available for '" + ticker + "'.",
@@ -651,15 +651,15 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                     return;
                 } else {
                     System.out.println("Ratios data fetched for ticker: " + ticker);
-                }
+                } */
 
                 // Assuming stockData and ratios contain the necessary fields
                 String industry = CompanyOverview.fetchIndustry(ticker);
                 String name = stockData.getString("name");
-                double price = stockData.getDouble("price");
+               /* double price = stockData.getDouble("price");
                 double peTtm = ratios.optDouble("peRatioTTM", 0.0);
                 double pbTtm = ratios.optDouble("pbRatioTTM", 0.0);
-                double dividendYieldTTM = KeyMetricsTTM.getDividendYieldTTM(ticker);
+                double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
                 double payoutRatio = ratios.optDouble("payoutRatioTTM", 0.0);
                 double pbAvg = fetchAveragePB(ticker);
                 double peAvg = fetchAveragePE(ticker);
@@ -669,7 +669,7 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                 double epsCurrentYear = ratios.optDouble("epsCurrentYear", 0.0);
                 double epsNextYear = ratios.optDouble("epsNextYear", 0.0);
                 double epsYear3 = ratios.optDouble("epsYear3", 0.0);
-                double debtToEquity = KeyMetricsTTM.getDebtToEquityTTM(ticker);
+                double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
                 double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                 double currentRatio = ratios.optDouble("currentRatioTTM", 0.0);
                 double quickRatio = 0;
@@ -677,14 +677,14 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                 double epsGrowth3 = calculateEpsGrowth2(epsNextYear, epsYear3);
                 double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
                 double roeAvg = 0;
-                double aScore = 0;
+                double aScore = 0; */
 
                 Object[] rowData = new Object[]{
-                    name, ticker, price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
-                    epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg, industry,};
+                    name, ticker,/* price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
+                    epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg,industry,*/};
 
                 tableModel.addRow(rowData);
-                System.out.println("Added stock: " + ticker + " deAvg" + deAvg);
+                System.out.println("Added stock: " + ticker);
 
                 // Save the updated watchlist
                 saveWatchlist();
@@ -774,9 +774,9 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                             double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
                             double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
                             double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
-                            double dividendYieldTTM = KeyMetricsTTM.getDividendYieldTTM(ticker);
-                            double payoutRatio = round(ratios.optDouble("payoutRatioTTM", 0.0), 2);
-                            double debtToEquity = KeyMetricsTTM.getDebtToEquityTTM(ticker);
+                            double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
+                            double payoutRatio = KeyMetricsTTM.fetchPayoutRatio(ticker);
+                            double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
                             double epsCurrentYear = epsEstimates != null
                                     ? round(epsEstimates.optDouble("eps0", 0.0), 2)
                                     : 0.0;
@@ -913,9 +913,9 @@ private void refreshSingleStock(String ticker, int modelRow) {
                     double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
                     double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
                     double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
-                    double dividendYieldTTM = KeyMetricsTTM.getDividendYieldTTM(ticker);
-                    double payoutRatio = round(ratios.optDouble("payoutRatioTTM", 0.0), 2);
-                    double debtToEquity = KeyMetricsTTM.getDebtToEquityTTM(ticker);
+                    double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
+                    double payoutRatio = KeyMetricsTTM.fetchPayoutRatio(ticker);
+                    double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
                     double epsCurrentYear = epsEstimates != null
                             ? round(epsEstimates.optDouble("eps0", 0.0), 2)
                             : 0.0;
