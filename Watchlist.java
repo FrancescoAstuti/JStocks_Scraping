@@ -3,21 +3,22 @@ package afin.jstocks;
 import afin.jstocks.CellsFormat;
 
 import javax.swing.*;
-
 import javax.swing.event.RowSorterEvent;
 import javax.swing.event.RowSorterListener;
-
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.awt.event.ActionListener;
+// import java.awt.Font; // No longer needed as individual import if qualified
+import java.awt.event.ActionListener; // Keep this specific import
 import java.io.*;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.List;
 import org.json.JSONArray;
@@ -29,11 +30,11 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import javax.swing.UIManager;
 import javax.swing.UIManager.LookAndFeelInfo;
-import java.awt.Color;
+// import java.awt.Color; // Ambiguity source, qualify usages
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFCellStyle;
-import org.apache.poi.xssf.usermodel.XSSFColor;
+// import org.apache.poi.xssf.usermodel.XSSFColor; // Already imported in CellsFormat if needed there
 import java.io.FileOutputStream;
 
 public class Watchlist {
@@ -42,7 +43,22 @@ public class Watchlist {
     private DefaultTableModel tableModel;
     private static final String API_KEY = API_key.getApiKey();
     private static final String COLUMN_SETTINGS_FILE = "column_settings.properties";
+    private static final String REFRESH_STATE_FILE = "refresh_state.properties"; // For saving refresh index
     private JPanel columnControlPanel;
+
+    // Instance variables for resumable refresh
+    private int lastSuccessfullyProcessedIndex = -1;
+    private SwingWorker<Void, Void> refreshDataWorker;
+    private JButton refreshButton; 
+    private JButton resumeButton;  
+    private JButton cancelButton;  
+
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
+    // Promoted to instance variables
+    private String[] dynamicColumnNames;
+    private String[] peForwardColumnNames;
+
 
     private String[] getDynamicColumnNames() {
         int currentYear = Calendar.getInstance().get(Calendar.YEAR);
@@ -52,26 +68,45 @@ public class Watchlist {
         }
         return columnNames;
     }
+    
+    private String[] getPEForwardColumnNames() {
+        int currentYear = Calendar.getInstance().get(Calendar.YEAR);
+        String[] columnNames = new String[3];
+        for (int i = 0; i < 3; i++) {
+            columnNames[i] = "PE FWD" + (currentYear + i);
+        }
+        return columnNames;
+    }
+
+
+    // Helper method to find column index by name
+    private int getColumnIndexByName(String columnName) {
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            if (tableModel.getColumnName(i).equalsIgnoreCase(columnName)) {
+                return i;
+            }
+        }
+        // System.err.println("Warning: Column '" + columnName + "' not found in table model for getColumnIndexByName.");
+        return -1; 
+    }
+
 
     public void createAndShowGUI() {
 
-        // Set Nimbus Look and Feel before creating any GUI components
         try {
             for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
                 if ("Nimbus".equals(info.getName())) {
                     UIManager.setLookAndFeel(info.getClassName());
-                    // Customize some Nimbus defaults if desired
-                    UIManager.put("control", new Color(240, 240, 240));
-                    UIManager.put("info", new Color(242, 242, 189));
-                    UIManager.put("nimbusBase", new Color(51, 98, 140));
-                    UIManager.put("nimbusBlueGrey", new Color(169, 176, 190));
-                    UIManager.put("nimbusSelectionBackground", new Color(104, 93, 156));
+                    UIManager.put("control", new java.awt.Color(240, 240, 240));
+                    UIManager.put("info", new java.awt.Color(242, 242, 189));
+                    UIManager.put("nimbusBase", new java.awt.Color(51, 98, 140));
+                    UIManager.put("nimbusBlueGrey", new java.awt.Color(169, 176, 190));
+                    UIManager.put("nimbusSelectionBackground", new java.awt.Color(104, 93, 156));
                     break;
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
-            // Fall back to system look and feel if Nimbus isn't available
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ex) {
@@ -81,60 +116,29 @@ public class Watchlist {
 
         JFrame frame = new JFrame("Watchlist");
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        frame.setSize(1000, 600);
+        frame.setSize(1024, 768); 
 
         JPanel mainPanel = new JPanel(new BorderLayout());
 
-        String[] dynamicColumnNames = getDynamicColumnNames();
-        String[] peForwardColumnNames = getPEForwardColumnNames();
+        this.dynamicColumnNames = getDynamicColumnNames();
+        this.peForwardColumnNames = getPEForwardColumnNames();
         
         tableModel = new DefaultTableModel(new Object[]{
-            "Name", "Ticker", "Price", "PE TTM", "PB TTM", "Div. yield %",
+            "Name", "Ticker", "Refresh Date", "Price", "PE TTM", "PB TTM", "Div. yield %", 
             "Payout Ratio", "Graham Number", "PB Avg", "PE Avg",
             "EPS TTM", "ROE TTM", "A-Score",
-            dynamicColumnNames[0], dynamicColumnNames[1], dynamicColumnNames[2],
+            this.dynamicColumnNames[0], this.dynamicColumnNames[1], this.dynamicColumnNames[2], 
             "Debt to Equity", "EPS Growth 1", "Current Ratio", "Quick Ratio",
             "EPS Growth 2", "EPS Growth 3", "DE Avg", "Industry", "ROE Avg", "P/FCF", "PFCF Avg",
-            peForwardColumnNames[0], peForwardColumnNames[1], peForwardColumnNames[2], "Volatility","PR Avg"}, 0) {
+            this.peForwardColumnNames[0], this.peForwardColumnNames[1], this.peForwardColumnNames[2], "Volatility","PR Avg"}, 0) {
 
             @Override
             public Class<?> getColumnClass(int columnIndex) {
-                switch (columnIndex) {
-                    case 2:
-                    case 3:
-                    case 4:
-                    case 5:
-                    case 6:
-                    case 7:
-                    case 8:
-                    case 9:
-                    case 10:
-                    case 11:
-                    case 12:
-                    case 13:
-                    case 14:
-                    case 15:
-                    case 16:
-                    case 17:
-                    case 18:
-                    case 19:
-                    case 20:
-                    case 21:
-                    case 22:
-                    case 23:
-                    case 24:
-                    case 25:
-                    case 26:
-                    case 27:
-                    case 28:
-                    case 29:
-                    case 30:
-                    case 31:
-
-                        return Double.class;
-                    default:
-                        return String.class;
+                String columnName = getColumnName(columnIndex); 
+                if ("Refresh Date".equals(columnName) || "Name".equals(columnName) || "Ticker".equals(columnName) || "Industry".equals(columnName)) {
+                    return String.class;
                 }
+                return Double.class;
             }
         };
 
@@ -150,99 +154,66 @@ public class Watchlist {
         for (int i = 0; i < watchlistTable.getColumnCount(); i++) {
             watchlistTable.getColumnModel().getColumn(i).setCellRenderer(renderer);
         }
+        
+        JPopupMenu popupMenu = new JPopupMenu();
+        JMenuItem refreshStockItem = new JMenuItem("Refresh Stock");
+        refreshStockItem.addActionListener(e -> {
+            int row = watchlistTable.getSelectedRow();
+            if (row != -1) {
+                int modelRow = watchlistTable.convertRowIndexToModel(row);
+                String ticker = (String) tableModel.getValueAt(modelRow, getColumnIndexByName("Ticker"));
+                refreshSingleStock(ticker, modelRow);
+            }
+        });
+        popupMenu.add(refreshStockItem);
+
+        JMenuItem clearStockItem = new JMenuItem("Clear Stock Values");
+        clearStockItem.addActionListener(e -> {
+            int row = watchlistTable.getSelectedRow();
+            if (row != -1) {
+                int modelRow = watchlistTable.convertRowIndexToModel(row);
+                clearStockValues(modelRow);
+            }
+        });
+        popupMenu.add(clearStockItem);
 
         watchlistTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 1) {  // Single click
+                if (e.getClickCount() == 1 && e.getButton() == MouseEvent.BUTTON1) {
                     int row = watchlistTable.rowAtPoint(e.getPoint());
                     int col = watchlistTable.columnAtPoint(e.getPoint());
-
-                    if (row >= 0 && col == 1) {  // Check if click is in the Ticker column
+                    if (row >= 0 && col == getColumnIndexByName("Ticker")) { 
                         String ticker = (String) watchlistTable.getValueAt(row, col);
-                        // Get the company name from the first column (index 0)
-                        String companyName = (String) watchlistTable.getValueAt(row, 0);
+                        String companyName = (String) watchlistTable.getValueAt(row, getColumnIndexByName("Name"));
                         CompanyOverview.showCompanyOverview(ticker, companyName);
+                    }
+                }
+            }
+
+            @Override
+            public void mousePressed(MouseEvent e) { showPopupIfNeeded(e); }
+            @Override
+            public void mouseReleased(MouseEvent e) { showPopupIfNeeded(e); }
+
+            private void showPopupIfNeeded(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    int row = watchlistTable.rowAtPoint(e.getPoint());
+                    if (row >= 0) {
+                        watchlistTable.setRowSelectionInterval(row, row);
+                        popupMenu.show(e.getComponent(), e.getX(), e.getY());
                     }
                 }
             }
         });
         
-        
-        // Add this code to the createAndShowGUI method after the renderer setup
-// (around line 152, after the cell renderer setup)
-
-// Create context menu
-JPopupMenu popupMenu = new JPopupMenu();
-JMenuItem refreshStockItem = new JMenuItem("Refresh Stock");
-refreshStockItem.addActionListener(e -> {
-    int row = watchlistTable.getSelectedRow();
-    if (row != -1) {
-        int modelRow = watchlistTable.convertRowIndexToModel(row);
-        String ticker = (String) tableModel.getValueAt(modelRow, 1);
-        refreshSingleStock(ticker, modelRow);
-    }
-});
-popupMenu.add(refreshStockItem);
-
-JMenuItem clearStockItem = new JMenuItem("Clear Stock Values");
-clearStockItem.addActionListener(e -> {
-    int row = watchlistTable.getSelectedRow();
-    if (row != -1) {
-        int modelRow = watchlistTable.convertRowIndexToModel(row);
-        clearStockValues(modelRow);
-    }
-});
-popupMenu.add(clearStockItem);
-
-// Replace the existing mouse listener with this one that handles both left-click and right-click
-watchlistTable.addMouseListener(new MouseAdapter() {
-    @Override
-    public void mouseClicked(MouseEvent e) {
-        if (e.getClickCount() == 1 && e.getButton() == MouseEvent.BUTTON1) {  // Left-click
-            int row = watchlistTable.rowAtPoint(e.getPoint());
-            int col = watchlistTable.columnAtPoint(e.getPoint());
-
-            if (row >= 0 && col == 1) {  // Check if click is in the Ticker column
-                String ticker = (String) watchlistTable.getValueAt(row, col);
-                // Get the company name from the first column (index 0)
-                String companyName = (String) watchlistTable.getValueAt(row, 0);
-                CompanyOverview.showCompanyOverview(ticker, companyName);
-            }
-        }
-    }
-
-    @Override
-    public void mousePressed(MouseEvent e) {
-        showPopupIfNeeded(e);
-    }
-
-    @Override
-    public void mouseReleased(MouseEvent e) {
-        showPopupIfNeeded(e);
-    }
-
-    private void showPopupIfNeeded(MouseEvent e) {
-        if (e.isPopupTrigger()) {  // Right-click
-            int row = watchlistTable.rowAtPoint(e.getPoint());
-            if (row >= 0) {
-                watchlistTable.setRowSelectionInterval(row, row);
-                popupMenu.show(e.getComponent(), e.getX(), e.getY());
-            }
-        }
-    }
-});
-        
-
-        // Enhanced ScrollPane with explicit horizontal scroll bar policy
-JScrollPane scrollPane = new JScrollPane(
-    watchlistTable,
-    JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-    JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-);
-// Make sure the table doesn't automatically resize columns to fit the viewport
-watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-mainPanel.add(scrollPane, BorderLayout.CENTER);
+        JScrollPane scrollPane = new JScrollPane(
+            watchlistTable,
+            JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+            JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        );
+        watchlistTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        mainPanel.add(scrollPane, BorderLayout.CENTER);
 
         setupColumnControlPanel();
         mainPanel.add(columnControlPanel, BorderLayout.WEST);
@@ -254,49 +225,70 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
         frame.add(mainPanel);
         frame.setLocationRelativeTo(null);
 
-        // Handle window closing
         frame.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent windowEvent) {
-                int confirm = JOptionPane.showOptionDialog(
+                boolean closeConfirmed = false;
+                boolean workerWasActiveAndCancelled = false;
+
+                if (refreshDataWorker != null && !refreshDataWorker.isDone()) {
+                    int confirmCloseDuringRefresh = JOptionPane.showConfirmDialog(
                         frame,
-                        "Are you sure you want to close this window?",
-                        "Close Confirmation",
+                        "A refresh operation is in progress. Are you sure you want to close?\nThis will cancel the current refresh.",
+                        "Confirm Close During Refresh",
                         JOptionPane.YES_NO_OPTION,
-                        JOptionPane.QUESTION_MESSAGE,
-                        null, null, null);
-                if (confirm == JOptionPane.YES_OPTION) {
+                        JOptionPane.WARNING_MESSAGE
+                    );
+                    if (confirmCloseDuringRefresh == JOptionPane.YES_OPTION) {
+                        refreshDataWorker.cancel(true); 
+                        // The worker's done() method will call saveRefreshState().
+                        workerWasActiveAndCancelled = true; 
+                        closeConfirmed = true; 
+                    } else {
+                        return; 
+                    }
+                } else {
+                    int confirmStandardClose = JOptionPane.showOptionDialog(
+                            frame, "Are you sure you want to close this window?",
+                            "Close Confirmation", JOptionPane.YES_NO_OPTION,
+                            JOptionPane.QUESTION_MESSAGE, null, null, null);
+                    if (confirmStandardClose == JOptionPane.YES_OPTION) {
+                        closeConfirmed = true;
+                    }
+                }
+
+                if (closeConfirmed) {
                     saveColumnSettings();
-                    saveWatchlist();
-                    frame.dispose();
+                    saveWatchlist(); // Save current table data regardless of refresh state
+                    if (!workerWasActiveAndCancelled && (refreshDataWorker == null || refreshDataWorker.isDone())) {
+                        // If worker was not active or already finished, save current refresh state
+                        saveRefreshState();
+                    }
+                    frame.dispose(); 
                 }
             }
         });
 
-        // After creating the UI, load settings asynchronously
         SwingUtilities.invokeLater(() -> {
-            loadColumnSettings();
+            loadColumnSettings(); 
             loadWatchlist();
-            loadSortOrder(sorter);
+            loadRefreshState(); // Load the refresh state
+            loadSortOrder(sorter); 
+            // updateRefreshButtonsState(); // Called at the end of loadRefreshState
         });
 
         frame.setVisible(true);
     }
 
     private void setupTableSorter(TableRowSorter<DefaultTableModel> sorter) {
-        // Set comparators for numeric columns if needed
-        for (int i = 2; i <= 29; i++) {
-            final int column = i;
-            sorter.setComparator(column, Comparator.comparingDouble(o -> (Double) o));
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            if (tableModel.getColumnClass(i) == Double.class) {
+                 sorter.setComparator(i, Comparator.comparingDouble(o -> (Double) o));
+            }
         }
-
-        // Use RowSorterListener instead of propertyChangeListener
-        sorter.addRowSorterListener(new RowSorterListener() {
-            @Override
-            public void sorterChanged(RowSorterEvent e) {
-                if (e.getType() == RowSorterEvent.Type.SORT_ORDER_CHANGED) {
-                    saveSortOrder(sorter.getSortKeys());
-                }
+        sorter.addRowSorterListener(e -> {
+            if (e.getType() == RowSorterEvent.Type.SORT_ORDER_CHANGED) {
+                saveSortOrder(sorter.getSortKeys());
             }
         });
     }
@@ -304,22 +296,15 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
     private void setupColumnControlPanel() {
         columnControlPanel = new JPanel();
         columnControlPanel.setLayout(new BoxLayout(columnControlPanel, BoxLayout.Y_AXIS));
-
         TableColumnModel columnModel = watchlistTable.getColumnModel();
         List<JCheckBox> checkBoxes = new ArrayList<>();
-
-        // Create checkboxes for each column and add them to the list
         for (int i = 0; i < columnModel.getColumnCount(); i++) {
-            String columnName = tableModel.getColumnName(i);
+            String columnName = tableModel.getColumnName(i); 
             JCheckBox checkBox = new JCheckBox(columnName, true);
             checkBox.addActionListener(e -> toggleColumnVisibility(columnName, checkBox.isSelected()));
             checkBoxes.add(checkBox);
         }
-
-        // Sort checkboxes alphabetically by their text
         checkBoxes.sort(Comparator.comparing(JCheckBox::getText));
-
-        // Add sorted checkboxes to the panel
         for (JCheckBox checkBox : checkBoxes) {
             columnControlPanel.add(checkBox);
         }
@@ -328,14 +313,22 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
     private void setupButtonPanel(JPanel buttonPanel) {
         JButton addButton = new JButton("Add Stock");
         JButton deleteButton = new JButton("Delete Stock");
-        JButton refreshButton = new JButton("Refresh");
+        refreshButton = new JButton("Refresh All"); 
+        resumeButton = new JButton("Resume Refresh"); 
+        cancelButton = new JButton("Cancel Refresh"); 
         JButton exportButton = new JButton("Export XLSX");
         JButton analyticsButton = new JButton("Analytics");
         JButton dataButton = new JButton("Data");
 
         addButton.addActionListener(e -> addStock());
         deleteButton.addActionListener(e -> deleteStock());
-        refreshButton.addActionListener(e -> refreshWatchlist());
+        refreshButton.addActionListener(e -> startRefreshDataWorker(false)); 
+        resumeButton.addActionListener(e -> startRefreshDataWorker(true));   
+        cancelButton.addActionListener(e -> {
+            if (refreshDataWorker != null && !refreshDataWorker.isDone()) {
+                refreshDataWorker.cancel(true);
+            }
+        });
         exportButton.addActionListener(e -> exportToExcel());
         analyticsButton.addActionListener(e -> Analytics.analyzeWatchlist()); 
         dataButton.addActionListener(e -> Download_Data.downloadTickerData(watchlistTable, tableModel));
@@ -343,451 +336,157 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
         buttonPanel.add(addButton);
         buttonPanel.add(deleteButton);
         buttonPanel.add(refreshButton);
+        buttonPanel.add(resumeButton);
+        buttonPanel.add(cancelButton);
         buttonPanel.add(exportButton);
         buttonPanel.add(analyticsButton); 
         buttonPanel.add(dataButton);
     }
-
-    private void toggleColumnVisibility(String columnName, boolean visible) {
-        TableColumnModel columnModel = watchlistTable.getColumnModel();
-        for (int i = 0; i < columnModel.getColumnCount(); i++) {
-            TableColumn column = columnModel.getColumn(i);
-            if (column.getHeaderValue().equals(columnName)) {
-                if (visible) {
-                    column.setMinWidth(15);
-                    column.setMaxWidth(Integer.MAX_VALUE);
-                    column.setPreferredWidth(75);
-                } else {
-                    column.setMinWidth(0);
-                    column.setMaxWidth(0);
-                    column.setPreferredWidth(0);
-                }
-                break;
-            }
+    
+    private void updateRefreshButtonsState() {
+        SwingUtilities.invokeLater(() -> { 
+            boolean workerActive = refreshDataWorker != null && !refreshDataWorker.isDone();
+            refreshButton.setEnabled(!workerActive);
+            boolean canResume = lastSuccessfullyProcessedIndex >= 0 && 
+                                lastSuccessfullyProcessedIndex < tableModel.getRowCount() - 1;
+            resumeButton.setEnabled(!workerActive && canResume);
+            cancelButton.setEnabled(workerActive);
+        });
+    }
+    
+    private void saveRefreshState() {
+        Properties properties = new Properties();
+        properties.setProperty("lastSuccessfullyProcessedIndex", String.valueOf(this.lastSuccessfullyProcessedIndex));
+        try (FileOutputStream out = new FileOutputStream(REFRESH_STATE_FILE)) {
+            properties.store(out, "Watchlist Refresh State");
+            System.out.println("Refresh state saved. Last processed index: " + this.lastSuccessfullyProcessedIndex);
+        } catch (IOException e) {
+            System.err.println("Error saving refresh state: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    private void loadWatchlist() {
-        File file = new File("watchlist.json");
-        System.out.println("Attempting to load watchlist from: " + file.getAbsolutePath());
-
-        if (file.exists()) {
-            try (FileReader reader = new FileReader(file)) {
-                Scanner scanner = new Scanner(reader);
-                String json = scanner.useDelimiter("\\Z").next();
-                scanner.close();
-
-                System.out.println("Loading watchlist data...");
-                JSONArray jsonArray = new JSONArray(json);
-                System.out.println("Found " + jsonArray.length() + " stocks");
-
-                while (tableModel.getRowCount() > 0) {
-                    tableModel.removeRow(0);
-                }
-
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    JSONObject jsonObject = jsonArray.getJSONObject(i);
-
-                    Object[] rowData = new Object[]{
-                        jsonObject.optString("name", ""),
-                        jsonObject.optString("ticker", "").toUpperCase(),
-                        jsonObject.optDouble("price", 0.0),
-                        jsonObject.optDouble("peTtm", 0.0),
-                        jsonObject.optDouble("pbTtm", 0.0),
-                        jsonObject.optDouble("dividendYield", 0.0),
-                        jsonObject.optDouble("payoutRatio", 0.0),
-                        jsonObject.optDouble("grahamNumber", 0.0),
-                        jsonObject.optDouble("pbAvg", 0.0),
-                        jsonObject.optDouble("peAvg", 0.0),
-                        jsonObject.optDouble("epsTtm", 0.0),
-                        jsonObject.optDouble("roeTtm", 0.0),
-                        jsonObject.optDouble("aScore", 0.0),
-                        jsonObject.optDouble("epsCurrentYear", 0.0),
-                        jsonObject.optDouble("epsNextYear", 0.0),
-                        jsonObject.optDouble("epsYear3", 0.0),
-                        jsonObject.optDouble("debtToEquity", 0.0),
-                        jsonObject.optDouble("epsGrowth1", 0.0),
-                        jsonObject.optDouble("currentRatio", 0.0),
-                        jsonObject.optDouble("quickRatio", 0.0),
-                        jsonObject.optDouble("epsGrowth2", 0.0),
-                        jsonObject.optDouble("epsGrowth3", 0.0),
-                        jsonObject.optDouble("deAvg", 0.0),
-                        jsonObject.optString("industry", "N/A"),
-                        jsonObject.optDouble("roeAvg", 0.0),
-                        jsonObject.optDouble("priceToFCF_TTM", 0.0),
-                        jsonObject.optDouble("priceToFCF_Avg", 0.0),
-                        jsonObject.optDouble("peForward1", 0.0),
-                        jsonObject.optDouble("peForward2", 0.0),
-                        jsonObject.optDouble("peForward3", 0.0),
-                        jsonObject.optDouble("volatility", 0.0),
-                        jsonObject.optDouble("payoutRatioAvg", 0.0),
-                    
-                    };
-                    
-                    tableModel.addRow(rowData);
-                    System.out.println("Added stock: " + jsonObject.optString("ticker", "")
-                            + " with price: " + jsonObject.optDouble("price", 0.0));
-                }
-                System.out.println("Watchlist loading completed");
-            } catch (IOException e) {
-                e.printStackTrace();
-                JOptionPane.showMessageDialog(null,
-                        "Error loading watchlist: " + e.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
+    private void loadRefreshState() {
+        Properties properties = new Properties();
+        File stateFile = new File(REFRESH_STATE_FILE);
+        if (stateFile.exists()) {
+            try (FileInputStream in = new FileInputStream(stateFile)) {
+                properties.load(in);
+                this.lastSuccessfullyProcessedIndex = Integer.parseInt(properties.getProperty("lastSuccessfullyProcessedIndex", "-1"));
+                System.out.println("Refresh state loaded. Last processed index: " + this.lastSuccessfullyProcessedIndex);
+            } catch (IOException | NumberFormatException e) {
+                System.err.println("Error loading refresh state or invalid format: " + e.getMessage());
+                this.lastSuccessfullyProcessedIndex = -1; // Default to -1 on error
             }
         } else {
-            System.out.println("Watchlist file does not exist.");
+            this.lastSuccessfullyProcessedIndex = -1; // Default if file doesn't exist
+            System.out.println("Refresh state file not found. Initializing last processed index to -1.");
         }
+        updateRefreshButtonsState(); // Update buttons after loading state
     }
 
-    private void saveWatchlist() {
-        System.out.println("Saving watchlist...");
-        JSONArray jsonArray = new JSONArray();
 
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
-            JSONObject jsonObject = new JSONObject();
-            jsonObject.put("name", tableModel.getValueAt(i, 0));
-            jsonObject.put("ticker", tableModel.getValueAt(i, 1));
-            jsonObject.put("price", tableModel.getValueAt(i, 2));
-            jsonObject.put("peTtm", tableModel.getValueAt(i, 3));
-            jsonObject.put("pbTtm", tableModel.getValueAt(i, 4));
-            jsonObject.put("dividendYield", tableModel.getValueAt(i, 5));
-            jsonObject.put("payoutRatio", tableModel.getValueAt(i, 6));
-            jsonObject.put("grahamNumber", tableModel.getValueAt(i, 7));
-            jsonObject.put("pbAvg", tableModel.getValueAt(i, 8));
-            jsonObject.put("peAvg", tableModel.getValueAt(i, 9));
-            jsonObject.put("epsTtm", tableModel.getValueAt(i, 10));
-            jsonObject.put("roeTtm", tableModel.getValueAt(i, 11));
-            jsonObject.put("aScore", tableModel.getValueAt(i, 12));
-            jsonObject.put("epsCurrentYear", tableModel.getValueAt(i, 13));
-            jsonObject.put("epsNextYear", tableModel.getValueAt(i, 14));
-            jsonObject.put("epsYear3", tableModel.getValueAt(i, 15));
-            jsonObject.put("debtToEquity", tableModel.getValueAt(i, 16));
-            jsonObject.put("epsGrowth1", tableModel.getValueAt(i, 17));
-            jsonObject.put("currentRatio", tableModel.getValueAt(i, 18));
-            jsonObject.put("quickRatio", tableModel.getValueAt(i, 19));
-            jsonObject.put("epsGrowth2", tableModel.getValueAt(i, 20));
-            jsonObject.put("epsGrowth3", tableModel.getValueAt(i, 21));
-            jsonObject.put("deAvg", tableModel.getValueAt(i, 22));
-            jsonObject.put("industry", tableModel.getValueAt(i, 23));
-            jsonObject.put("roeAvg", tableModel.getValueAt(i, 24));
-            jsonObject.put("priceToFCF_TTM", tableModel.getValueAt(i, 25));
-            jsonObject.put("priceToFCF_Avg", tableModel.getValueAt(i, 26));
-            jsonObject.put("peForward1", tableModel.getValueAt(i, 27));
-            jsonObject.put("peForward2", tableModel.getValueAt(i, 28));
-            jsonObject.put("peForward3", tableModel.getValueAt(i, 29));
-            jsonObject.put("volatility", tableModel.getValueAt(i, 30));
-             jsonObject.put("payoutRatioAvg", tableModel.getValueAt(i, 31));
-            jsonArray.put(jsonObject);
+    private void startRefreshDataWorker(boolean isResuming) {
+        if (refreshDataWorker != null && !refreshDataWorker.isDone()) {
+            JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), 
+                "A refresh operation is already in progress.", "In Progress", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+         if (tableModel.getRowCount() == 0) {
+            JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Watchlist is empty. Nothing to refresh.", "Empty Watchlist", JOptionPane.INFORMATION_MESSAGE);
+            return;
         }
 
-        try (FileWriter fileWriter = new FileWriter("watchlist.json")) {
-            fileWriter.write(jsonArray.toString());
-            fileWriter.flush();
-            System.out.println("Watchlist saved successfully");
-        } catch (IOException e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(null,
-                    "Error saving watchlist: " + e.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void saveColumnSettings() {
-        Properties properties = new Properties();
-        TableColumnModel columnModel = watchlistTable.getColumnModel();
-
-        for (int i = 0; i < columnModel.getColumnCount(); i++) {
-            TableColumn column = columnModel.getColumn(i);
-            String columnName = column.getHeaderValue().toString();
-            properties.setProperty("column" + i + ".name", columnName);
-            properties.setProperty("column" + i + ".index", String.valueOf(columnModel.getColumnIndex(columnName)));
-            properties.setProperty("column" + i + ".visible", String.valueOf(column.getMaxWidth() != 0));
-        }
-
-        try (FileOutputStream out = new FileOutputStream(COLUMN_SETTINGS_FILE)) {
-            properties.store(out, "Column Order and Visibility Settings");
-            System.out.println("Column settings saved successfully");
-        } catch (IOException e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(null,
-                    "Error saving column settings: " + e.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void loadColumnSettings() {
-        Properties properties = new Properties();
-        File settingsFile = new File(COLUMN_SETTINGS_FILE);
-
-        if (settingsFile.exists()) {
-            try (FileInputStream in = new FileInputStream(settingsFile)) {
-                properties.load(in);
-
-                TableColumnModel columnModel = watchlistTable.getColumnModel();
-                for (int i = 0; i < columnModel.getColumnCount(); i++) {
-                    String columnName = properties.getProperty("column" + i + ".name");
-                    if (columnName != null) {
-                        int columnIndex = Integer.parseInt(properties.getProperty("column" + i + ".index"));
-                        boolean isVisible = Boolean.parseBoolean(properties.getProperty("column" + i + ".visible"));
-
-                        TableColumn column = columnModel.getColumn(columnModel.getColumnIndex(columnName));
-                        columnModel.moveColumn(columnModel.getColumnIndex(columnName), columnIndex);
-                        toggleColumnVisibility(columnName, isVisible);
-
-                        for (Component comp : columnControlPanel.getComponents()) {
-                            if (comp instanceof JCheckBox) {
-                                JCheckBox checkBox = (JCheckBox) comp;
-                                if (checkBox.getText().equals(columnName)) {
-                                    checkBox.setSelected(isVisible);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                System.out.println("Column settings loaded successfully");
-            } catch (IOException e) {
-                e.printStackTrace();
-                JOptionPane.showMessageDialog(null,
-                        "Error loading column settings: " + e.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-
-    private void saveSortOrder(java.util.List<? extends RowSorter.SortKey> sortKeys) {
-        Properties properties = new Properties();
-        for (int i = 0; i < sortKeys.size(); i++) {
-            RowSorter.SortKey sortKey = sortKeys.get(i);
-            properties.setProperty("sortKey" + i + ".column", String.valueOf(sortKey.getColumn()));
-            properties.setProperty("sortKey" + i + ".order", sortKey.getSortOrder().toString());
-        }
-
-        try (FileOutputStream out = new FileOutputStream("sort_order.properties")) {
-            properties.store(out, "Table Sort Order");
-            System.out.println("Sort order saved successfully");
-        } catch (IOException e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(null,
-                    "Error saving sort order: " + e.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void loadSortOrder(TableRowSorter<DefaultTableModel> sorter) {
-        Properties properties = new Properties();
-        File file = new File("sort_order.properties");
-
-        if (file.exists()) {
-            try (FileInputStream in = new FileInputStream(file)) {
-                properties.load(in);
-
-                List<RowSorter.SortKey> sortKeys = new ArrayList<>();
-                for (int i = 0;; i++) {
-                    String columnStr = properties.getProperty("sortKey" + i + ".column");
-                    String orderStr = properties.getProperty("sortKey" + i + ".order");
-                    if (columnStr == null || orderStr == null) {
-                        break;
-                    }
-
-                    int column = Integer.parseInt(columnStr);
-                    SortOrder order = SortOrder.valueOf(orderStr);
-                    sortKeys.add(new RowSorter.SortKey(column, order));
-                }
-
-                sorter.setSortKeys(sortKeys);
-                System.out.println("Sort order loaded successfully");
-            } catch (IOException e) {
-                e.printStackTrace();
-                JOptionPane.showMessageDialog(null,
-                        "Error loading sort order: " + e.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-
-    private void addStock() {
-        String ticker = JOptionPane.showInputDialog("Enter Stock Ticker:");
-        if (ticker != null && !ticker.trim().isEmpty()) {
-            ticker = ticker.toUpperCase();
-
-            // Check if ticker already exists in the watchlist
-            for (int i = 0; i < tableModel.getRowCount(); i++) {
-                if (ticker.equals((String) tableModel.getValueAt(i, 1))) {
-                    JOptionPane.showMessageDialog(null,
-                            "Stock '" + ticker + "' is already in the watchlist.",
-                            "Duplicate Stock",
-                            JOptionPane.WARNING_MESSAGE);
-                    return;
-                }
-            }
-
-            try {
-                JSONObject stockData = fetchStockData(ticker);
-
-                if (stockData == null) {
-                    JOptionPane.showMessageDialog(null,
-                            "Symbol '" + ticker + "' not found.",
-                            "Symbol Not Found",
-                            JOptionPane.WARNING_MESSAGE);
-                    return;
-                } else {
-                    System.out.println("Stock data fetched for ticker: " + ticker);
-                }
-
-               /* JSONObject ratios = fetchStockRatios(ticker);
-                if (ratios == null) {
-                    JOptionPane.showMessageDialog(null,
-                            "Financial data not available for '" + ticker + "'.",
-                            "Data Not Available",
-                            JOptionPane.WARNING_MESSAGE);
-                    return;
-                } else {
-                    System.out.println("Ratios data fetched for ticker: " + ticker);
-                } */
-
-                // Assuming stockData and ratios contain the necessary fields
-                String industry = CompanyOverview.fetchIndustry(ticker);
-                String name = stockData.getString("name");
-               /* double price = stockData.getDouble("price");
-                double peTtm = ratios.optDouble("peRatioTTM", 0.0);
-                double pbTtm = ratios.optDouble("pbRatioTTM", 0.0);
-                double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
-                double payoutRatio = ratios.optDouble("payoutRatioTTM", 0.0);
-                double pbAvg = fetchAveragePB(ticker);
-                double peAvg = fetchAveragePE(ticker);
-                double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
-                double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
-                double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
-                double epsCurrentYear = ratios.optDouble("epsCurrentYear", 0.0);
-                double epsNextYear = ratios.optDouble("epsNextYear", 0.0);
-                double epsYear3 = ratios.optDouble("epsYear3", 0.0);
-                double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
-                double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
-                double currentRatio = ratios.optDouble("currentRatioTTM", 0.0);
-                double quickRatio = 0;
-                double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
-                double epsGrowth3 = calculateEpsGrowth2(epsNextYear, epsYear3);
-                double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
-                double roeAvg = 0;
-                double aScore = 0; */
-
-                Object[] rowData = new Object[]{
-                    name, ticker,/* price, peTtm, pbTtm, dividendYieldTTM, payoutRatio, grahamNumber, pbAvg, peAvg, epsTtm, roeTtm, aScore,
-                    epsCurrentYear, epsNextYear, epsYear3, debtToEquity, epsGrowth1, currentRatio, quickRatio, epsGrowth2, epsGrowth3, deAvg,industry,*/};
-
-                tableModel.addRow(rowData);
-                System.out.println("Added stock: " + ticker);
-
-                // Save the updated watchlist
-                saveWatchlist();
-
-            } catch (Exception e) {
-                e.printStackTrace();
-                JOptionPane.showMessageDialog(null,
-                        "Error processing '" + ticker + "': " + e.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-        }
-    }
-
-    private double calculateEpsGrowth1(double epsCurrentYear, double epsTtm) {
-        if (epsTtm == 0) {
-            return 0;
-        } else if (epsTtm < 0) {
-            double growthRate1 = 100 * (epsCurrentYear - epsTtm) / (-epsTtm);
-
-            return round(growthRate1, 2);
-        } else {
-            double growthRate1 = 100 * (epsCurrentYear - epsTtm) / epsTtm;
-
-            return round(growthRate1, 2);
-        }
-    }
-
-    private double calculateEpsGrowth2(double epsCurrentYear, double epsNextYear) {
-        if (epsCurrentYear == 0) {
-            return 0;
-        }
-        double growthRate2 = 100 * (epsNextYear - epsCurrentYear) / epsCurrentYear;
-
-        return round(growthRate2, 2);
-    }
-
-    private double calculateEpsGrowth3(double epsYear3, double epsNextYear) {
-        if (epsNextYear == 0) {
-            return 0;
-        }
-        double growthRate3 = 100 * (epsYear3 - epsNextYear) / epsNextYear;
-
-        return round(growthRate3, 2);
-    }
-
-    private void refreshWatchlist() {
-        System.out.println("Starting watchlist refresh...");
-
-        // Create progress bar panel
         JPanel progressPanel = new JPanel(new BorderLayout());
-        JProgressBar progressBar = new JProgressBar(0, tableModel.getRowCount());
-        JLabel statusLabel = new JLabel("Refreshing watchlist...");
+        JProgressBar progressBar = new JProgressBar(0, 100); 
+        JLabel statusLabel = new JLabel("Initializing refresh...");
         progressPanel.add(statusLabel, BorderLayout.NORTH);
         progressPanel.add(progressBar, BorderLayout.CENTER);
         progressPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // Add progress panel to the main window
         Container contentPane = watchlistTable.getRootPane().getContentPane();
         contentPane.add(progressPanel, BorderLayout.SOUTH);
         contentPane.revalidate();
         contentPane.repaint();
 
-        SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
+        this.refreshDataWorker = new SwingWorker<Void, Void>() {
+            private int workerInternalLastProcessedIndex = -1; 
+            private int totalItemsForThisRunGlobal = 0; 
+
             @Override
             protected Void doInBackground() {
+                updateRefreshButtonsState(); 
+
                 int rowCount = tableModel.getRowCount();
-                for (int i = 0; i < rowCount; i++) {
-                    int modelRow = watchlistTable.convertRowIndexToModel(i);
-                    String ticker = (String) tableModel.getValueAt(modelRow, 1);
+                int startIndex = 0;
+
+                if (isResuming && Watchlist.this.lastSuccessfullyProcessedIndex >= 0 && Watchlist.this.lastSuccessfullyProcessedIndex < rowCount - 1) {
+                    startIndex = Watchlist.this.lastSuccessfullyProcessedIndex + 1;
+                    workerInternalLastProcessedIndex = Watchlist.this.lastSuccessfullyProcessedIndex;
+                    System.out.println("Resuming refresh from index: " + startIndex);
+                } else { // Not resuming, or invalid resume state, so start fresh
+                    Watchlist.this.lastSuccessfullyProcessedIndex = -1; 
+                    saveRefreshState(); // Clear any persisted resumable state
+                    workerInternalLastProcessedIndex = -1;
+                    System.out.println("Starting full refresh from beginning. Resetting last processed index.");
+                }
+
+
+                totalItemsForThisRunGlobal = rowCount - startIndex;
+                
+                if (totalItemsForThisRunGlobal <= 0) {
+                     SwingUtilities.invokeLater(() -> {
+                        if (rowCount > 0) { 
+                           statusLabel.setText("Already up-to-date or nothing to resume.");
+                           progressBar.setValue(progressBar.getMaximum());
+                        } else {
+                           statusLabel.setText("Watchlist is empty.");
+                        }
+                     });
+                    return null; 
+                }
+                
+                SwingUtilities.invokeLater(() -> {
+                     progressBar.setMaximum(totalItemsForThisRunGlobal);
+                     progressBar.setValue(0);
+                });
+
+                for (int i = startIndex; i < rowCount; i++) {
+                    if (isCancelled()) {
+                        Watchlist.this.lastSuccessfullyProcessedIndex = workerInternalLastProcessedIndex; 
+                        System.out.println("Refresh cancelled by user. Last successfully processed index: " + Watchlist.this.lastSuccessfullyProcessedIndex);
+                        break;
+                    }
+
+                    int modelRow = watchlistTable.convertRowIndexToModel(i); 
+                    String ticker = (String) tableModel.getValueAt(modelRow, getColumnIndexByName("Ticker"));
+                    
+                    final int progressValue = i - startIndex + 1;
+                    final String currentTickerForLabel = ticker;
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText("Refreshing: " + currentTickerForLabel + " (" + progressValue + "/" + totalItemsForThisRunGlobal + ")");
+                        progressBar.setValue(progressValue);
+                    });
+
                     try {
-
-                        // Update progress
-                        final int progress = i;
-                        SwingUtilities.invokeLater(() -> {
-                            progressBar.setValue(progress);
-                            statusLabel.setText("Refreshing: " + ticker + " (" + progress + "/" + rowCount + ")");
-                        });
-
                         JSONObject stockData = fetchStockData(ticker);
                         JSONObject ratios = fetchStockRatios(ticker);
                         JSONObject epsEstimates = Estimates.fetchEpsEstimates(ticker);
 
-                        if (stockData != null) {
-                            final double price = convertGbxToGbp(round(stockData.getDouble("price"), 2), ticker);
+                        if (stockData != null) { 
+                            final double price = convertGbxToGbp(round(stockData.optDouble("price", 0.0), 2), ticker);
                             double peTtm = round(ratios.optDouble("peRatioTTM", 0.0), 2);
                             double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
                             double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
                             double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
                             double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
-                            double payoutRatio = KeyMetricsTTM.fetchPayoutRatio(ticker);
-                            double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
-                            double epsCurrentYear = epsEstimates != null
-                                    ? round(epsEstimates.optDouble("eps0", 0.0), 2)
-                                    : 0.0;
-                            double epsNextYear = epsEstimates != null
-                                    ? round(epsEstimates.optDouble("eps1", 0.0), 2)
-                                    : 0.0;
-                            double epsYear3 = epsEstimates != null
-                                    ? round(epsEstimates.optDouble("eps2", 0.0), 2)
-                                    : 0.0;
-                            double currentRatio = KeyMetricsTTM.fetchCurrentRatio(ticker);
-                            double quickRatio = 0;
+                            double payoutRatioVal = KeyMetricsTTM.fetchPayoutRatio(ticker); 
+                            double debtToEquityVal = KeyMetricsTTM.fetchDebtToEquity(ticker); 
+                            double epsCurrentYear = epsEstimates != null ? round(epsEstimates.optDouble("eps0", 0.0), 2) : 0.0;
+                            double epsNextYear = epsEstimates != null ? round(epsEstimates.optDouble("eps1", 0.0), 2) : 0.0;
+                            double epsYear3 = epsEstimates != null ? round(epsEstimates.optDouble("eps2", 0.0), 2) : 0.0;
+                            double currentRatioVal = KeyMetricsTTM.fetchCurrentRatio(ticker); 
+                            double quickRatioVal = 0.0; 
 
                             double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
                             double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
@@ -803,309 +502,657 @@ mainPanel.add(scrollPane, BorderLayout.CENTER);
                             double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
                             double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
                             String industry = CompanyOverview.fetchIndustry(ticker);
-                            double prAvg = Ratios.fetchPayoutRatioAverage(ticker); 
-                            double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatio,
-                                                            quickRatio, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
+                            double prAvg = Ratios.fetchPayoutRatioAverage(ticker);
+                            double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatioVal, debtToEquityVal, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatioVal, quickRatioVal, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
                             double volatilityScore = Analytics.calculateVolatilityScore(ticker);
-                             
-                            System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
+                            String refreshDateStr = LocalDate.now().format(DATE_FORMATTER);
 
+                            final int finalModelRow = modelRow; 
                             SwingUtilities.invokeLater(() -> {
-                                tableModel.setValueAt(price, modelRow, 2);
-                                tableModel.setValueAt(peTtm, modelRow, 3);
-                                tableModel.setValueAt(pbTtm, modelRow, 4);
-                                tableModel.setValueAt(dividendYieldTTM, modelRow, 5);
-                                tableModel.setValueAt(payoutRatio, modelRow, 6);
-                                tableModel.setValueAt(grahamNumber, modelRow, 7);
-                                tableModel.setValueAt(pbAvg, modelRow, 8); // PB Avg
-                                tableModel.setValueAt(peAvg, modelRow, 9); // PE Avg
-                                tableModel.setValueAt(epsTtm, modelRow, 10);
-                                tableModel.setValueAt(roeTtm, modelRow, 11);
-                                tableModel.setValueAt(aScore, modelRow, 12);
-                                tableModel.setValueAt(epsCurrentYear, modelRow, 13);
-                                tableModel.setValueAt(epsNextYear, modelRow, 14);
-                                tableModel.setValueAt(epsYear3, modelRow, 15);
-                                tableModel.setValueAt(debtToEquity, modelRow, 16);
-                                tableModel.setValueAt(epsGrowth1, modelRow, 17);
-                                tableModel.setValueAt(currentRatio, modelRow, 18); // Index of the new "Current Ratio" column
-                                tableModel.setValueAt(quickRatio, modelRow, 19); // Index of the new "Quick Ratio" column
-                                tableModel.setValueAt(epsGrowth2, modelRow, 20);
-                                tableModel.setValueAt(epsGrowth3, modelRow, 21);
-                                tableModel.setValueAt(deAvg, modelRow, 22);
-                                tableModel.setValueAt(industry, modelRow, 23);
-                                tableModel.setValueAt(roeAvg, modelRow, 24); // ROE Avg
-                                tableModel.setValueAt(priceToFCF_TTM, modelRow, 25);
-                                tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
-                                tableModel.setValueAt(peForward1, modelRow, 27);
-                                tableModel.setValueAt(peForward2, modelRow, 28);
-                                tableModel.setValueAt(peForward3, modelRow, 29);
-                                tableModel.setValueAt(volatilityScore, modelRow, 30);
-                                tableModel.setValueAt(prAvg, modelRow, 31);
-
+                                tableModel.setValueAt(refreshDateStr, finalModelRow, getColumnIndexByName("Refresh Date"));
+                                tableModel.setValueAt(price, finalModelRow, getColumnIndexByName("Price"));
+                                tableModel.setValueAt(peTtm, finalModelRow, getColumnIndexByName("PE TTM"));
+                                tableModel.setValueAt(pbTtm, finalModelRow, getColumnIndexByName("PB TTM"));
+                                tableModel.setValueAt(dividendYieldTTM, finalModelRow, getColumnIndexByName("Div. yield %"));
+                                tableModel.setValueAt(payoutRatioVal, finalModelRow, getColumnIndexByName("Payout Ratio"));
+                                tableModel.setValueAt(grahamNumber, finalModelRow, getColumnIndexByName("Graham Number"));
+                                tableModel.setValueAt(pbAvg, finalModelRow, getColumnIndexByName("PB Avg"));
+                                tableModel.setValueAt(peAvg, finalModelRow, getColumnIndexByName("PE Avg"));
+                                tableModel.setValueAt(epsTtm, finalModelRow, getColumnIndexByName("EPS TTM"));
+                                tableModel.setValueAt(roeTtm, finalModelRow, getColumnIndexByName("ROE TTM"));
+                                tableModel.setValueAt(aScore, finalModelRow, getColumnIndexByName("A-Score"));
+                                tableModel.setValueAt(epsCurrentYear, finalModelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[0]));
+                                tableModel.setValueAt(epsNextYear, finalModelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[1]));
+                                tableModel.setValueAt(epsYear3, finalModelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[2]));
+                                tableModel.setValueAt(debtToEquityVal, finalModelRow, getColumnIndexByName("Debt to Equity"));
+                                tableModel.setValueAt(epsGrowth1, finalModelRow, getColumnIndexByName("EPS Growth 1"));
+                                tableModel.setValueAt(currentRatioVal, finalModelRow, getColumnIndexByName("Current Ratio"));
+                                tableModel.setValueAt(quickRatioVal, finalModelRow, getColumnIndexByName("Quick Ratio"));
+                                tableModel.setValueAt(epsGrowth2, finalModelRow, getColumnIndexByName("EPS Growth 2"));
+                                tableModel.setValueAt(epsGrowth3, finalModelRow, getColumnIndexByName("EPS Growth 3"));
+                                tableModel.setValueAt(deAvg, finalModelRow, getColumnIndexByName("DE Avg"));
+                                tableModel.setValueAt(industry, finalModelRow, getColumnIndexByName("Industry"));
+                                tableModel.setValueAt(roeAvg, finalModelRow, getColumnIndexByName("ROE Avg"));
+                                tableModel.setValueAt(priceToFCF_TTM, finalModelRow, getColumnIndexByName("P/FCF"));
+                                tableModel.setValueAt(PriceToFCF_Avg, finalModelRow, getColumnIndexByName("PFCF Avg"));
+                                tableModel.setValueAt(peForward1, finalModelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[0]));
+                                tableModel.setValueAt(peForward2, finalModelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[1]));
+                                tableModel.setValueAt(peForward3, finalModelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[2]));
+                                tableModel.setValueAt(volatilityScore, finalModelRow, getColumnIndexByName("Volatility"));
+                                tableModel.setValueAt(prAvg, finalModelRow, getColumnIndexByName("PR Avg"));
                             });
-
-                            System.out.println("Refreshed stock data: " + ticker);
+                             workerInternalLastProcessedIndex = i; 
+                             System.out.println("Refreshed stock data: " + ticker + " at view index " + i);
+                        } else {
+                             System.err.println("Failed to fetch stock data for " + ticker + ". stockData is null.");
                         }
+                        Thread.sleep(200); 
+
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        Watchlist.this.lastSuccessfullyProcessedIndex = workerInternalLastProcessedIndex;
+                        System.out.println("Refresh interrupted. Last successfully processed view index: " + Watchlist.this.lastSuccessfullyProcessedIndex);
+                        break; 
                     } catch (Exception e) {
                         e.printStackTrace();
                         System.err.println("Error refreshing " + ticker + ": " + e.getMessage());
                     }
+                }
+                if (!isCancelled()) {
+                    Watchlist.this.lastSuccessfullyProcessedIndex = workerInternalLastProcessedIndex;
                 }
                 return null;
             }
 
             @Override
             protected void done() {
-                // Remove progress panel when done
-                contentPane.remove(progressPanel);
-                contentPane.revalidate();
-                contentPane.repaint();
-
-                saveWatchlist();
-                System.out.println("Watchlist refresh completed");
-
-                JOptionPane.showMessageDialog(
-                        watchlistTable,
-                        "Refresh completed!",
-                        "Watchlist",
-                        JOptionPane.INFORMATION_MESSAGE);
-
-            }
-        };
-
-        worker.execute();
-    }
-    
-    // Add this new method to handle refreshing a single stock
-
-private void refreshSingleStock(String ticker, int modelRow) {
-    System.out.println("Starting single stock refresh for: " + ticker);
-    
-    // Create progress indicator
-    JDialog progressDialog = new JDialog();
-    progressDialog.setTitle("Refreshing " + ticker);
-    progressDialog.setSize(250, 100);
-    progressDialog.setLayout(new BorderLayout());
-    // Center the progress dialog on the screen instead of relative to watchlistTable
-    progressDialog.setLocationRelativeTo(null);
-    
-    JProgressBar progressBar = new JProgressBar();
-    progressBar.setIndeterminate(true);
-    JLabel statusLabel = new JLabel("  Fetching data for " + ticker + "...");
-    statusLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-    
-    progressDialog.add(statusLabel, BorderLayout.NORTH);
-    progressDialog.add(progressBar, BorderLayout.CENTER);
-    progressDialog.setModal(false);
-    progressDialog.setVisible(true);
-    
-    SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
-        @Override
-        protected Void doInBackground() {
-            try {
-                JSONObject stockData = fetchStockData(ticker);
-                JSONObject ratios = fetchStockRatios(ticker);
-                JSONObject epsEstimates = Estimates.fetchEpsEstimates(ticker);
-
-                if (stockData != null) {
-                    final double price = convertGbxToGbp(round(stockData.getDouble("price"), 2), ticker);
-                    double peTtm = round(ratios.optDouble("peRatioTTM", 0.0), 2);
-                    double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
-                    double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
-                    double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
-                    double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
-                    double payoutRatio = KeyMetricsTTM.fetchPayoutRatio(ticker);
-                    double debtToEquity = KeyMetricsTTM.fetchDebtToEquity(ticker);
-                    double epsCurrentYear = epsEstimates != null
-                            ? round(epsEstimates.optDouble("eps0", 0.0), 2)
-                            : 0.0;
-                    double epsNextYear = epsEstimates != null
-                            ? round(epsEstimates.optDouble("eps1", 0.0), 2)
-                            : 0.0;
-                    double epsYear3 = epsEstimates != null
-                            ? round(epsEstimates.optDouble("eps2", 0.0), 2)
-                            : 0.0;
-                    double currentRatio = KeyMetricsTTM.fetchCurrentRatio(ticker);
-                    double quickRatio = 0;
-
-                    // Calculate all other metrics (same as in refreshWatchlist)
-                    double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
-                    double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
-                    double epsGrowth3 = calculateEpsGrowth3(epsYear3, epsNextYear);
-                    double pbAvg = fetchAveragePB(ticker);
-                    double peForward1 = calculatePEForward(price, epsCurrentYear);
-                    double peForward2 = calculatePEForward(price, epsNextYear);
-                    double peForward3 = calculatePEForward(price, epsYear3);
-                    double peAvg = fetchAveragePE(ticker);
-                    double priceToFCF_TTM = TTM_Ratios.getPriceToFreeCashFlowRatioTTM(ticker);
-                    double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
-                    double roeAvg = fetchAverageROE(ticker);
-                    double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
-                    double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
-                    String industry = CompanyOverview.fetchIndustry(ticker);
-                    double prAvg = Ratios.fetchPayoutRatioAverage(ticker); 
-                    double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatio, debtToEquity, 
-                                                   roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, 
-                                                   epsGrowth2, epsGrowth3, currentRatio, quickRatio, 
-                                                   grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
-                    double volatilityScore = Analytics.calculateVolatilityScore(ticker);
-                         
-                    System.out.printf("Ticker: %s, DebtToEquity: %s, A-Score: %f%n", ticker, debtToEquity, aScore);
-
-                    SwingUtilities.invokeLater(() -> {
-                        // Update all the cells with new data, same as in refreshWatchlist
-                        tableModel.setValueAt(price, modelRow, 2);
-                        tableModel.setValueAt(peTtm, modelRow, 3);
-                        tableModel.setValueAt(pbTtm, modelRow, 4);
-                        tableModel.setValueAt(dividendYieldTTM, modelRow, 5);
-                        tableModel.setValueAt(payoutRatio, modelRow, 6);
-                        tableModel.setValueAt(grahamNumber, modelRow, 7);
-                        tableModel.setValueAt(pbAvg, modelRow, 8);
-                        tableModel.setValueAt(peAvg, modelRow, 9);
-                        tableModel.setValueAt(epsTtm, modelRow, 10);
-                        tableModel.setValueAt(roeTtm, modelRow, 11);
-                        tableModel.setValueAt(aScore, modelRow, 12);
-                        tableModel.setValueAt(epsCurrentYear, modelRow, 13);
-                        tableModel.setValueAt(epsNextYear, modelRow, 14);
-                        tableModel.setValueAt(epsYear3, modelRow, 15);
-                        tableModel.setValueAt(debtToEquity, modelRow, 16);
-                        tableModel.setValueAt(epsGrowth1, modelRow, 17);
-                        tableModel.setValueAt(currentRatio, modelRow, 18);
-                        tableModel.setValueAt(quickRatio, modelRow, 19);
-                        tableModel.setValueAt(epsGrowth2, modelRow, 20);
-                        tableModel.setValueAt(epsGrowth3, modelRow, 21);
-                        tableModel.setValueAt(deAvg, modelRow, 22);
-                        tableModel.setValueAt(industry, modelRow, 23);
-                        tableModel.setValueAt(roeAvg, modelRow, 24);
-                        tableModel.setValueAt(priceToFCF_TTM, modelRow, 25);
-                        tableModel.setValueAt(PriceToFCF_Avg, modelRow, 26);
-                        tableModel.setValueAt(peForward1, modelRow, 27);
-                        tableModel.setValueAt(peForward2, modelRow, 28);
-                        tableModel.setValueAt(peForward3, modelRow, 29);
-                        tableModel.setValueAt(volatilityScore, modelRow, 30);
-                        tableModel.setValueAt(prAvg, modelRow, 31);
-
-                        progressDialog.dispose();
-                        saveWatchlist();
-                        
-                        // Create a centered message dialog
-                        JOptionPane successPane = new JOptionPane(
-                            ticker + " data refreshed successfully!",
-                            JOptionPane.INFORMATION_MESSAGE);
-                        
-                        JDialog successDialog = successPane.createDialog("Stock Refresh Complete");
-                        // Center the success dialog on screen
-                        successDialog.setLocationRelativeTo(null);
-                        successDialog.setVisible(true);
-                    });
-
-                    System.out.println("Refreshed single stock data: " + ticker);
-                } else {
-                    SwingUtilities.invokeLater(() -> {
-                        progressDialog.dispose();
-                        
-                        // Create a centered error dialog
-                        JOptionPane errorPane = new JOptionPane(
-                            "Could not refresh data for " + ticker,
-                            JOptionPane.ERROR_MESSAGE);
-                        
-                        JDialog errorDialog = errorPane.createDialog("Refresh Failed");
-                        // Center the error dialog on screen
-                        errorDialog.setLocationRelativeTo(null);
-                        errorDialog.setVisible(true);
-                    });
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
                 SwingUtilities.invokeLater(() -> {
-                    progressDialog.dispose();
-                    
-                    // Create a centered exception dialog
-                    JOptionPane exceptionPane = new JOptionPane(
-                        "Error refreshing " + ticker + ": " + e.getMessage(),
-                        JOptionPane.ERROR_MESSAGE);
-                    
-                    JDialog exceptionDialog = exceptionPane.createDialog("Refresh Error");
-                    // Center the exception dialog on screen
-                    exceptionDialog.setLocationRelativeTo(null);
-                    exceptionDialog.setVisible(true);
+                    contentPane.remove(progressPanel);
+                    contentPane.revalidate();
+                    contentPane.repaint();
+
+                    try {
+                        get(); 
+                        if (isCancelled()) {
+                            String lastTicker = "N/A";
+                            if (Watchlist.this.lastSuccessfullyProcessedIndex != -1 && Watchlist.this.lastSuccessfullyProcessedIndex < tableModel.getRowCount()) {
+                                int modelRowForTicker = watchlistTable.convertRowIndexToModel(Watchlist.this.lastSuccessfullyProcessedIndex);
+                                if (modelRowForTicker >= 0 && modelRowForTicker < tableModel.getRowCount()) {
+                                    lastTicker = (String) tableModel.getValueAt(modelRowForTicker, getColumnIndexByName("Ticker"));
+                                }
+                            }
+                            JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(),
+                                    "Refresh Cancelled. Last successfully processed: " + lastTicker + " (view index " + Watchlist.this.lastSuccessfullyProcessedIndex + ").",
+                                    "Refresh Interrupted", JOptionPane.WARNING_MESSAGE);
+                        } else {
+                            if (Watchlist.this.lastSuccessfullyProcessedIndex == tableModel.getRowCount() - 1) {
+                                saveWatchlist(); 
+                                JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Watchlist refresh completed!", "Refresh Complete", JOptionPane.INFORMATION_MESSAGE);
+                                Watchlist.this.lastSuccessfullyProcessedIndex = -1; 
+                            } else if (totalItemsForThisRunGlobal <= 0 && tableModel.getRowCount() > 0){ 
+                                JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Watchlist is already up-to-date or nothing to resume.", "No Refresh Needed", JOptionPane.INFORMATION_MESSAGE);
+                                if(Watchlist.this.lastSuccessfullyProcessedIndex == tableModel.getRowCount() -1) Watchlist.this.lastSuccessfullyProcessedIndex = -1; 
+                            } else if (tableModel.getRowCount() == 0) {
+                                // Already handled
+                            }
+                            else if (Watchlist.this.lastSuccessfullyProcessedIndex >= -1) { 
+                                 String lastTickerMsg = "None";
+                                 if (Watchlist.this.lastSuccessfullyProcessedIndex != -1 && Watchlist.this.lastSuccessfullyProcessedIndex < tableModel.getRowCount()) {
+                                     int modelRowForTickerMsg = watchlistTable.convertRowIndexToModel(Watchlist.this.lastSuccessfullyProcessedIndex);
+                                      if (modelRowForTickerMsg >= 0 && modelRowForTickerMsg < tableModel.getRowCount()) {
+                                        lastTickerMsg = (String) tableModel.getValueAt(modelRowForTickerMsg, getColumnIndexByName("Ticker"));
+                                      }
+                                 }
+                                JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(),
+                                    "Refresh finished. Last processed: " + lastTickerMsg + " (view index " + Watchlist.this.lastSuccessfullyProcessedIndex +")." +
+                                    (Watchlist.this.lastSuccessfullyProcessedIndex < tableModel.getRowCount() -1 ? " You can resume." : ""),
+                                    "Refresh Incomplete/Finished", JOptionPane.INFORMATION_MESSAGE);
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Refresh was interrupted.", "Interrupted", JOptionPane.WARNING_MESSAGE);
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        e.getCause().printStackTrace();
+                        JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Error during refresh: " + e.getCause().getMessage(), "Refresh Error", JOptionPane.ERROR_MESSAGE);
+                    } finally {
+                        refreshDataWorker = null; 
+                        saveRefreshState(); // Save the final state
+                        updateRefreshButtonsState(); 
+                    }
                 });
             }
-            return null;
-        }
-    };
-    
-    worker.execute();
-}
+        };
+        this.refreshDataWorker.execute();
+    }
 
-// Method to clear all numerical values of a stock
-private void clearStockValues(int modelRow) {
-    // Confirm with the user first
-    String ticker = (String) tableModel.getValueAt(modelRow, 1);
+    private void toggleColumnVisibility(String columnName, boolean visible) {
+        TableColumnModel columnModel = watchlistTable.getColumnModel();
+        for (int i = 0; i < columnModel.getColumnCount(); i++) {
+            TableColumn column = columnModel.getColumn(i);
+            if (column.getHeaderValue().equals(columnName)) {
+                if (visible) {
+                    column.setMinWidth(15);
+                    column.setMaxWidth(Integer.MAX_VALUE);
+                    column.setPreferredWidth(75); 
+                } else {
+                    column.setMinWidth(0);
+                    column.setMaxWidth(0);
+                    column.setPreferredWidth(0);
+                }
+                break;
+            }
+        }
+    }
+
+    private void loadWatchlist() {
+        File file = new File("watchlist.json");
+        System.out.println("Attempting to load watchlist from: " + file.getAbsolutePath());
+        if (file.exists()) {
+            try (FileReader reader = new FileReader(file); Scanner scanner = new Scanner(reader)) {
+                String jsonContent = scanner.useDelimiter("\\Z").next();
+                JSONArray jsonArray = new JSONArray(jsonContent);
+                System.out.println("Found " + jsonArray.length() + " stocks");
+                tableModel.setRowCount(0); 
+                for (int i = 0; i < jsonArray.length(); i++) {
+                    JSONObject jsonObject = jsonArray.getJSONObject(i);
+                    Object[] rowData = new Object[tableModel.getColumnCount()]; 
+                    
+                    rowData[getColumnIndexByName("Name")] = jsonObject.optString("name", "");
+                    rowData[getColumnIndexByName("Ticker")] = jsonObject.optString("ticker", "").toUpperCase();
+                    rowData[getColumnIndexByName("Refresh Date")] = jsonObject.optString("refreshDate", "N/A");
+                    rowData[getColumnIndexByName("Price")] = jsonObject.optDouble("price", 0.0);
+                    rowData[getColumnIndexByName("PE TTM")] = jsonObject.optDouble("peTtm", 0.0);
+                    rowData[getColumnIndexByName("PB TTM")] = jsonObject.optDouble("pbTtm", 0.0);
+                    rowData[getColumnIndexByName("Div. yield %")] = jsonObject.optDouble("dividendYield", 0.0);
+                    rowData[getColumnIndexByName("Payout Ratio")] = jsonObject.optDouble("payoutRatio", 0.0);
+                    rowData[getColumnIndexByName("Graham Number")] = jsonObject.optDouble("grahamNumber", 0.0);
+                    rowData[getColumnIndexByName("PB Avg")] = jsonObject.optDouble("pbAvg", 0.0);
+                    rowData[getColumnIndexByName("PE Avg")] = jsonObject.optDouble("peAvg", 0.0);
+                    rowData[getColumnIndexByName("EPS TTM")] = jsonObject.optDouble("epsTtm", 0.0);
+                    rowData[getColumnIndexByName("ROE TTM")] = jsonObject.optDouble("roeTtm", 0.0);
+                    rowData[getColumnIndexByName("A-Score")] = jsonObject.optDouble("aScore", 0.0);
+                    rowData[getColumnIndexByName(this.dynamicColumnNames[0])] = jsonObject.optDouble("epsCurrentYear", 0.0);
+                    rowData[getColumnIndexByName(this.dynamicColumnNames[1])] = jsonObject.optDouble("epsNextYear", 0.0);
+                    rowData[getColumnIndexByName(this.dynamicColumnNames[2])] = jsonObject.optDouble("epsYear3", 0.0);
+                    rowData[getColumnIndexByName("Debt to Equity")] = jsonObject.optDouble("debtToEquity", 0.0);
+                    rowData[getColumnIndexByName("EPS Growth 1")] = jsonObject.optDouble("epsGrowth1", 0.0);
+                    rowData[getColumnIndexByName("Current Ratio")] = jsonObject.optDouble("currentRatio", 0.0);
+                    rowData[getColumnIndexByName("Quick Ratio")] = jsonObject.optDouble("quickRatio", 0.0);
+                    rowData[getColumnIndexByName("EPS Growth 2")] = jsonObject.optDouble("epsGrowth2", 0.0);
+                    rowData[getColumnIndexByName("EPS Growth 3")] = jsonObject.optDouble("epsGrowth3", 0.0);
+                    rowData[getColumnIndexByName("DE Avg")] = jsonObject.optDouble("deAvg", 0.0);
+                    rowData[getColumnIndexByName("Industry")] = jsonObject.optString("industry", "N/A");
+                    rowData[getColumnIndexByName("ROE Avg")] = jsonObject.optDouble("roeAvg", 0.0);
+                    rowData[getColumnIndexByName("P/FCF")] = jsonObject.optDouble("priceToFCF_TTM", 0.0);
+                    rowData[getColumnIndexByName("PFCF Avg")] = jsonObject.optDouble("priceToFCF_Avg", 0.0);
+                    rowData[getColumnIndexByName(this.peForwardColumnNames[0])] = jsonObject.optDouble("peForward1", 0.0);
+                    rowData[getColumnIndexByName(this.peForwardColumnNames[1])] = jsonObject.optDouble("peForward2", 0.0);
+                    rowData[getColumnIndexByName(this.peForwardColumnNames[2])] = jsonObject.optDouble("peForward3", 0.0);
+                    rowData[getColumnIndexByName("Volatility")] = jsonObject.optDouble("volatility", 0.0);
+                    rowData[getColumnIndexByName("PR Avg")] = jsonObject.optDouble("payoutRatioAvg", 0.0);
+                    
+                    tableModel.addRow(rowData);
+                }
+                System.out.println("Watchlist loading completed");
+            } catch (Exception e) { 
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(null, "Error loading watchlist: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else {
+            System.out.println("Watchlist file does not exist.");
+        }
+    }
+
+    private void saveWatchlist() {
+        System.out.println("Saving watchlist...");
+        JSONArray jsonArray = new JSONArray();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            JSONObject jsonObject = new JSONObject();
+            jsonObject.put("name", tableModel.getValueAt(i, getColumnIndexByName("Name")));
+            jsonObject.put("ticker", tableModel.getValueAt(i, getColumnIndexByName("Ticker")));
+            jsonObject.put("refreshDate", tableModel.getValueAt(i, getColumnIndexByName("Refresh Date")));
+            jsonObject.put("price", tableModel.getValueAt(i, getColumnIndexByName("Price")));
+            jsonObject.put("peTtm", tableModel.getValueAt(i, getColumnIndexByName("PE TTM")));
+            jsonObject.put("pbTtm", tableModel.getValueAt(i, getColumnIndexByName("PB TTM")));
+            jsonObject.put("dividendYield", tableModel.getValueAt(i, getColumnIndexByName("Div. yield %")));
+            jsonObject.put("payoutRatio", tableModel.getValueAt(i, getColumnIndexByName("Payout Ratio")));
+            jsonObject.put("grahamNumber", tableModel.getValueAt(i, getColumnIndexByName("Graham Number")));
+            jsonObject.put("pbAvg", tableModel.getValueAt(i, getColumnIndexByName("PB Avg")));
+            jsonObject.put("peAvg", tableModel.getValueAt(i, getColumnIndexByName("PE Avg")));
+            jsonObject.put("epsTtm", tableModel.getValueAt(i, getColumnIndexByName("EPS TTM")));
+            jsonObject.put("roeTtm", tableModel.getValueAt(i, getColumnIndexByName("ROE TTM")));
+            jsonObject.put("aScore", tableModel.getValueAt(i, getColumnIndexByName("A-Score")));
+            jsonObject.put("epsCurrentYear", tableModel.getValueAt(i, getColumnIndexByName(this.dynamicColumnNames[0])));
+            jsonObject.put("epsNextYear", tableModel.getValueAt(i, getColumnIndexByName(this.dynamicColumnNames[1])));
+            jsonObject.put("epsYear3", tableModel.getValueAt(i, getColumnIndexByName(this.dynamicColumnNames[2])));
+            jsonObject.put("debtToEquity", tableModel.getValueAt(i, getColumnIndexByName("Debt to Equity")));
+            jsonObject.put("epsGrowth1", tableModel.getValueAt(i, getColumnIndexByName("EPS Growth 1")));
+            jsonObject.put("currentRatio", tableModel.getValueAt(i, getColumnIndexByName("Current Ratio")));
+            jsonObject.put("quickRatio", tableModel.getValueAt(i, getColumnIndexByName("Quick Ratio")));
+            jsonObject.put("epsGrowth2", tableModel.getValueAt(i, getColumnIndexByName("EPS Growth 2")));
+            jsonObject.put("epsGrowth3", tableModel.getValueAt(i, getColumnIndexByName("EPS Growth 3")));
+            jsonObject.put("deAvg", tableModel.getValueAt(i, getColumnIndexByName("DE Avg")));
+            jsonObject.put("industry", tableModel.getValueAt(i, getColumnIndexByName("Industry")));
+            jsonObject.put("roeAvg", tableModel.getValueAt(i, getColumnIndexByName("ROE Avg")));
+            jsonObject.put("priceToFCF_TTM", tableModel.getValueAt(i, getColumnIndexByName("P/FCF")));
+            jsonObject.put("priceToFCF_Avg", tableModel.getValueAt(i, getColumnIndexByName("PFCF Avg")));
+            jsonObject.put("peForward1", tableModel.getValueAt(i, getColumnIndexByName(this.peForwardColumnNames[0])));
+            jsonObject.put("peForward2", tableModel.getValueAt(i, getColumnIndexByName(this.peForwardColumnNames[1])));
+            jsonObject.put("peForward3", tableModel.getValueAt(i, getColumnIndexByName(this.peForwardColumnNames[2])));
+            jsonObject.put("volatility", tableModel.getValueAt(i, getColumnIndexByName("Volatility")));
+            jsonObject.put("payoutRatioAvg", tableModel.getValueAt(i, getColumnIndexByName("PR Avg")));
+            jsonArray.put(jsonObject);
+        }
+        try (FileWriter fileWriter = new FileWriter("watchlist.json")) {
+            fileWriter.write(jsonArray.toString(2)); 
+            System.out.println("Watchlist saved successfully");
+        } catch (IOException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(null, "Error saving watchlist: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+   private void saveColumnSettings() {
+        Properties properties = new Properties();
+        TableColumnModel columnModel = watchlistTable.getColumnModel();
+        Map<Integer, Integer> modelToViewIndexMap = new HashMap<>();
+        for (int viewIdx = 0; viewIdx < columnModel.getColumnCount(); viewIdx++) {
+            modelToViewIndexMap.put(columnModel.getColumn(viewIdx).getModelIndex(), viewIdx);
+        }
+
+        for (int modelIdx = 0; modelIdx < tableModel.getColumnCount(); modelIdx++) {
+            TableColumn column = watchlistTable.getColumn(tableModel.getColumnName(modelIdx)); 
+            String columnName = column.getHeaderValue().toString();
+            
+            properties.setProperty("column" + modelIdx + ".name", columnName);
+            properties.setProperty("column" + modelIdx + ".modelIndex", String.valueOf(column.getModelIndex()));
+            properties.setProperty("column" + modelIdx + ".viewIndex", String.valueOf(modelToViewIndexMap.getOrDefault(column.getModelIndex(), modelIdx)));
+            properties.setProperty("column" + modelIdx + ".visible", String.valueOf(column.getMaxWidth() != 0));
+            properties.setProperty("column" + modelIdx + ".width", String.valueOf(column.getPreferredWidth()));
+        }
+        try (FileOutputStream out = new FileOutputStream(COLUMN_SETTINGS_FILE)) {
+            properties.store(out, "Column Order, Visibility, and Width Settings");
+            System.out.println("Column settings saved successfully");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void loadColumnSettings() {
+        Properties properties = new Properties();
+        File settingsFile = new File(COLUMN_SETTINGS_FILE);
+
+        if (!settingsFile.exists()) {
+            System.out.println("Column settings file not found. Using default column settings.");
+            TableColumnModel currentColumnModel = watchlistTable.getColumnModel();
+            for (int i = 0; i < currentColumnModel.getColumnCount(); i++) {
+                TableColumn col = currentColumnModel.getColumn(i);
+                String colName = col.getHeaderValue().toString();
+                // Set default visibility for checkboxes
+                for (Component comp : columnControlPanel.getComponents()) {
+                    if (comp instanceof JCheckBox && ((JCheckBox) comp).getText().equals(colName)) {
+                        ((JCheckBox) comp).setSelected(true); // Default to visible
+                        break;
+                    }
+                }
+                // Set default column properties (already done by JTable, but good for consistency)
+                col.setMinWidth(15);
+                col.setMaxWidth(Integer.MAX_VALUE);
+                col.setPreferredWidth(75);
+            }
+            watchlistTable.revalidate();
+            watchlistTable.repaint();
+            return;
+        }
+
+        try (FileInputStream in = new FileInputStream(settingsFile)) {
+            properties.load(in);
+            TableColumnModel currentColumnModel = watchlistTable.getColumnModel();
+
+            Map<String, Integer> columnToSavedViewIndex = new HashMap<>();
+            Map<String, Integer> columnToSavedWidth = new HashMap<>();
+            Map<String, Boolean> columnToSavedVisibility = new HashMap<>();
+            
+            for (int i = 0; ; i++) { 
+                String nameKey = "column" + i + ".name"; 
+                String propColumnName = properties.getProperty(nameKey);
+                if (propColumnName == null) break; 
+
+                int savedViewIndex = Integer.parseInt(properties.getProperty("column" + i + ".viewIndex", String.valueOf(i)));
+                boolean isVisible = Boolean.parseBoolean(properties.getProperty("column" + i + ".visible", "true"));
+                int savedWidth = Integer.parseInt(properties.getProperty("column" + i + ".width", "75"));
+
+                columnToSavedViewIndex.put(propColumnName, savedViewIndex);
+                columnToSavedWidth.put(propColumnName, savedWidth);
+                columnToSavedVisibility.put(propColumnName, isVisible);
+            }
+
+            List<TableColumn> columnsInViewOrder = new ArrayList<>();
+            for (int modelIdx = 0; modelIdx < tableModel.getColumnCount(); modelIdx++) {
+                String columnNameFromModel = tableModel.getColumnName(modelIdx);
+                TableColumn tableColumn = null;
+                try {
+                    tableColumn = watchlistTable.getColumn(columnNameFromModel);
+                } catch (IllegalArgumentException e) {
+                    System.err.println("Could not find TableColumn for: " + columnNameFromModel + " during settings load.");
+                    continue; 
+                }
+
+                boolean isVisible = columnToSavedVisibility.getOrDefault(columnNameFromModel, true);
+                int width = columnToSavedWidth.getOrDefault(columnNameFromModel, 75);
+
+                if (!isVisible) {
+                    tableColumn.setMinWidth(0);
+                    tableColumn.setMaxWidth(0);
+                    tableColumn.setPreferredWidth(0);
+                } else {
+                    tableColumn.setMinWidth(15);
+                    tableColumn.setMaxWidth(Integer.MAX_VALUE);
+                    tableColumn.setPreferredWidth(width);
+                }
+                columnsInViewOrder.add(tableColumn); 
+
+                for (Component comp : columnControlPanel.getComponents()) {
+                    if (comp instanceof JCheckBox && ((JCheckBox) comp).getText().equals(columnNameFromModel)) {
+                        ((JCheckBox) comp).setSelected(isVisible);
+                        break;
+                    }
+                }
+            }
+            
+            columnsInViewOrder.sort(Comparator.comparingInt(col -> 
+                columnToSavedViewIndex.getOrDefault(col.getHeaderValue().toString(), Integer.MAX_VALUE)
+            ));
+
+            while (currentColumnModel.getColumnCount() > 0) {
+                currentColumnModel.removeColumn(currentColumnModel.getColumn(0));
+            }
+            for (TableColumn tc : columnsInViewOrder) {
+                currentColumnModel.addColumn(tc);
+            }
+            
+            System.out.println("Column settings loaded and applied.");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(null, "Error loading column settings: " + e.getMessage() + ". Using defaults.", "Settings Error", JOptionPane.ERROR_MESSAGE);
+            TableColumnModel currentColumnModel = watchlistTable.getColumnModel();
+             for (int i = 0; i < currentColumnModel.getColumnCount(); i++) {
+                TableColumn col = currentColumnModel.getColumn(i);
+                col.setMinWidth(15);
+                col.setMaxWidth(Integer.MAX_VALUE);
+                col.setPreferredWidth(75);
+                String colName = col.getHeaderValue().toString();
+                for (Component comp : columnControlPanel.getComponents()) {
+                    if (comp instanceof JCheckBox && ((JCheckBox) comp).getText().equals(colName)) {
+                        ((JCheckBox) comp).setSelected(true);
+                        break;
+                    }
+                }
+            }
+        }
+        watchlistTable.revalidate();
+        watchlistTable.repaint();
+    }
+
+
+    private void saveSortOrder(java.util.List<? extends RowSorter.SortKey> sortKeys) {
+        Properties properties = new Properties();
+        for (int i = 0; i < sortKeys.size(); i++) {
+            RowSorter.SortKey sortKey = sortKeys.get(i);
+            properties.setProperty("sortKey" + i + ".column", String.valueOf(sortKey.getColumn()));
+            properties.setProperty("sortKey" + i + ".order", sortKey.getSortOrder().toString());
+        }
+        try (FileOutputStream out = new FileOutputStream("sort_order.properties")) {
+            properties.store(out, "Table Sort Order");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void loadSortOrder(TableRowSorter<DefaultTableModel> sorter) {
+        Properties properties = new Properties();
+        File file = new File("sort_order.properties");
+        if (file.exists()) {
+            try (FileInputStream in = new FileInputStream(file)) {
+                properties.load(in);
+                List<RowSorter.SortKey> sortKeys = new ArrayList<>();
+                for (int i = 0; ; i++) {
+                    String columnStr = properties.getProperty("sortKey" + i + ".column");
+                    String orderStr = properties.getProperty("sortKey" + i + ".order");
+                    if (columnStr == null || orderStr == null) break;
+                    int column = Integer.parseInt(columnStr);
+                    SortOrder order = SortOrder.valueOf(orderStr);
+                    if (column < tableModel.getColumnCount()) { 
+                       sortKeys.add(new RowSorter.SortKey(column, order));
+                    }
+                }
+                if (!sortKeys.isEmpty()) sorter.setSortKeys(sortKeys);
+            } catch (Exception e) { 
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void addStock() {
+        String ticker = JOptionPane.showInputDialog(watchlistTable.getTopLevelAncestor(), "Enter Stock Ticker:");
+        if (ticker != null && !ticker.trim().isEmpty()) {
+            ticker = ticker.toUpperCase();
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                if (ticker.equals(tableModel.getValueAt(i, getColumnIndexByName("Ticker")))) {
+                    JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Stock '" + ticker + "' is already in the watchlist.", "Duplicate Stock", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+            }
+            try {
+                JSONObject stockData = fetchStockData(ticker);
+                if (stockData == null || !stockData.has("name")) { 
+                    JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Symbol '" + ticker + "' not found or no data available.", "Symbol Not Found", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                String name = stockData.getString("name");
+                Object[] rowData = new Object[tableModel.getColumnCount()];
+                rowData[getColumnIndexByName("Name")] = name;
+                rowData[getColumnIndexByName("Ticker")] = ticker;
+                rowData[getColumnIndexByName("Refresh Date")] = "N/A"; 
+
+                for(int j=0; j<rowData.length; j++) { 
+                    if (rowData[j] == null) { 
+                        if(tableModel.getColumnClass(j) == Double.class) rowData[j] = 0.0;
+                        else if (tableModel.getColumnName(j).equals("Industry")) rowData[j] = "N/A"; 
+                        else rowData[j] = ""; 
+                    }
+                }
+                tableModel.addRow(rowData);
+                System.out.println("Added stock: " + ticker);
+                saveWatchlist(); 
+            } catch (Exception e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Error processing '" + ticker + "': " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
     
-    // Get the parent frame for proper centering
-    Frame frame = JOptionPane.getFrameForComponent(watchlistTable);
-    
-    // Create and configure the confirmation dialog
-    JOptionPane optionPane = new JOptionPane(
-            "Are you sure you want to clear all values for " + ticker + "?",
-            JOptionPane.QUESTION_MESSAGE,
-            JOptionPane.YES_NO_OPTION);
-    
-    // Create a dialog with the option pane
-    JDialog dialog = optionPane.createDialog(frame, "Confirm Clear");
-    
-    // Center the dialog on the screen
-    dialog.setLocationRelativeTo(null);
-    
-    // Show the dialog and get the result
-    dialog.setVisible(true);
-    
-    // Process the user's response
-    Object selectedValue = optionPane.getValue();
-    if (selectedValue != null && selectedValue instanceof Integer) {
-        int confirm = ((Integer) selectedValue).intValue();
+    private void refreshSingleStock(String ticker, int modelRow) {
+        System.out.println("Starting single stock refresh for: " + ticker);
+        JDialog progressDialog = new JDialog((Frame) watchlistTable.getTopLevelAncestor(), "Refreshing " + ticker, false); 
+        progressDialog.setSize(350, 120);
+        progressDialog.setLayout(new BorderLayout());
+        progressDialog.setLocationRelativeTo(watchlistTable.getTopLevelAncestor());
         
+        JProgressBar progressBarSingle = new JProgressBar();
+        progressBarSingle.setIndeterminate(true);
+        JLabel statusLabelSingle = new JLabel(" Fetching data for " + ticker + "...", SwingConstants.CENTER);
+        statusLabelSingle.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        
+        JPanel singleProgressPanel = new JPanel(new BorderLayout());
+        singleProgressPanel.add(statusLabelSingle, BorderLayout.NORTH);
+        singleProgressPanel.add(progressBarSingle, BorderLayout.CENTER);
+        progressDialog.add(singleProgressPanel);
+
+        SwingWorker<Boolean, Void> singleStockWorker = new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                try {
+                    JSONObject stockData = fetchStockData(ticker);
+                    JSONObject ratios = fetchStockRatios(ticker);
+                    JSONObject epsEstimates = Estimates.fetchEpsEstimates(ticker);
+
+                    if (stockData != null) {
+                        final double price = convertGbxToGbp(round(stockData.optDouble("price",0.0), 2), ticker);
+                        double peTtm = round(ratios.optDouble("peRatioTTM", 0.0), 2);
+                        double pbTtm = round(ratios.optDouble("pbRatioTTM", 0.0), 2);
+                        double epsTtm = peTtm != 0 ? round((1 / peTtm) * price, 2) : 0.0;
+                        double roeTtm = round(ratios.optDouble("roeTTM", 0.0), 2);
+                        double dividendYieldTTM = KeyMetricsTTM.fetchDividendYield(ticker);
+                        double payoutRatioVal = KeyMetricsTTM.fetchPayoutRatio(ticker);
+                        double debtToEquityVal = KeyMetricsTTM.fetchDebtToEquity(ticker);
+                        double epsCurrentYear = epsEstimates != null ? round(epsEstimates.optDouble("eps0", 0.0), 2) : 0.0;
+                        double epsNextYear = epsEstimates != null ? round(epsEstimates.optDouble("eps1", 0.0), 2) : 0.0;
+                        double epsYear3 = epsEstimates != null ? round(epsEstimates.optDouble("eps2", 0.0), 2) : 0.0;
+                        double currentRatioVal = KeyMetricsTTM.fetchCurrentRatio(ticker);
+                        double quickRatioVal = 0.0; 
+                        double epsGrowth1 = calculateEpsGrowth1(epsCurrentYear, epsTtm);
+                        double epsGrowth2 = calculateEpsGrowth2(epsCurrentYear, epsNextYear);
+                        double epsGrowth3 = calculateEpsGrowth3(epsYear3, epsNextYear);
+                        double pbAvg = fetchAveragePB(ticker);
+                        double peForward1 = calculatePEForward(price, epsCurrentYear);
+                        double peForward2 = calculatePEForward(price, epsNextYear);
+                        double peForward3 = calculatePEForward(price, epsYear3);
+                        double peAvg = fetchAveragePE(ticker);
+                        double priceToFCF_TTM = TTM_Ratios.getPriceToFreeCashFlowRatioTTM(ticker);
+                        double PriceToFCF_Avg = Ratios.fetchPriceToFreeCashFlowAverage(ticker);
+                        double roeAvg = fetchAverageROE(ticker);
+                        double grahamNumber = calculateGrahamNumber(price, peAvg, pbAvg, epsTtm, pbTtm);
+                        double deAvg = Ratios.fetchDebtToEquityAverage(ticker);
+                        String industry = CompanyOverview.fetchIndustry(ticker);
+                        double prAvg = Ratios.fetchPayoutRatioAverage(ticker);
+                        double aScore = calculateAScore(pbAvg, pbTtm, peAvg, peTtm, payoutRatioVal, debtToEquityVal, roeTtm, roeAvg, dividendYieldTTM, deAvg, epsGrowth1, epsGrowth2, epsGrowth3, currentRatioVal, quickRatioVal, grahamNumber, price, priceToFCF_TTM, PriceToFCF_Avg, prAvg);
+                        double volatilityScore = Analytics.calculateVolatilityScore(ticker);
+                        String refreshDateStr = LocalDate.now().format(DATE_FORMATTER);
+                        
+                        SwingUtilities.invokeLater(() -> {
+                            tableModel.setValueAt(refreshDateStr, modelRow, getColumnIndexByName("Refresh Date"));
+                            tableModel.setValueAt(price, modelRow, getColumnIndexByName("Price"));
+                            tableModel.setValueAt(peTtm, modelRow, getColumnIndexByName("PE TTM"));
+                            tableModel.setValueAt(pbTtm, modelRow, getColumnIndexByName("PB TTM"));
+                            tableModel.setValueAt(dividendYieldTTM, modelRow, getColumnIndexByName("Div. yield %"));
+                            tableModel.setValueAt(payoutRatioVal, modelRow, getColumnIndexByName("Payout Ratio"));
+                            tableModel.setValueAt(grahamNumber, modelRow, getColumnIndexByName("Graham Number"));
+                            tableModel.setValueAt(pbAvg, modelRow, getColumnIndexByName("PB Avg"));
+                            tableModel.setValueAt(peAvg, modelRow, getColumnIndexByName("PE Avg"));
+                            tableModel.setValueAt(epsTtm, modelRow, getColumnIndexByName("EPS TTM"));
+                            tableModel.setValueAt(roeTtm, modelRow, getColumnIndexByName("ROE TTM"));
+                            tableModel.setValueAt(aScore, modelRow, getColumnIndexByName("A-Score"));
+                            tableModel.setValueAt(epsCurrentYear, modelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[0]));
+                            tableModel.setValueAt(epsNextYear, modelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[1]));
+                            tableModel.setValueAt(epsYear3, modelRow, getColumnIndexByName(Watchlist.this.dynamicColumnNames[2]));
+                            tableModel.setValueAt(debtToEquityVal, modelRow, getColumnIndexByName("Debt to Equity"));
+                            tableModel.setValueAt(epsGrowth1, modelRow, getColumnIndexByName("EPS Growth 1"));
+                            tableModel.setValueAt(currentRatioVal, modelRow, getColumnIndexByName("Current Ratio"));
+                            tableModel.setValueAt(quickRatioVal, modelRow, getColumnIndexByName("Quick Ratio"));
+                            tableModel.setValueAt(epsGrowth2, modelRow, getColumnIndexByName("EPS Growth 2"));
+                            tableModel.setValueAt(epsGrowth3, modelRow, getColumnIndexByName("EPS Growth 3"));
+                            tableModel.setValueAt(deAvg, modelRow, getColumnIndexByName("DE Avg"));
+                            tableModel.setValueAt(industry, modelRow, getColumnIndexByName("Industry"));
+                            tableModel.setValueAt(roeAvg, modelRow, getColumnIndexByName("ROE Avg"));
+                            tableModel.setValueAt(priceToFCF_TTM, modelRow, getColumnIndexByName("P/FCF"));
+                            tableModel.setValueAt(PriceToFCF_Avg, modelRow, getColumnIndexByName("PFCF Avg"));
+                            tableModel.setValueAt(peForward1, modelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[0]));
+                            tableModel.setValueAt(peForward2, modelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[1]));
+                            tableModel.setValueAt(peForward3, modelRow, getColumnIndexByName(Watchlist.this.peForwardColumnNames[2]));
+                            tableModel.setValueAt(volatilityScore, modelRow, getColumnIndexByName("Volatility"));
+                            tableModel.setValueAt(prAvg, modelRow, getColumnIndexByName("PR Avg"));
+                            saveWatchlist(); 
+                        });
+                        return true; 
+                    }
+                    return false; 
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(progressDialog.getParent(), "Error refreshing " + ticker + ": " + e.getMessage(), "Refresh Error", JOptionPane.ERROR_MESSAGE));
+                    return false; 
+                }
+            }
+
+            @Override
+            protected void done() {
+                SwingUtilities.invokeLater(() -> {
+                    progressDialog.dispose();
+                    try {
+                        boolean success = get(); 
+                        String message = success ? ticker + " data refreshed successfully!" : "Failed to refresh " + ticker + ".";
+                        JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), message, "Stock Refresh", 
+                                                     success ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.ERROR_MESSAGE);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                         JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), ticker + " refresh was interrupted.", "Interrupted", JOptionPane.WARNING_MESSAGE);
+                    } catch (java.util.concurrent.ExecutionException e) {
+                         JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Error during " + ticker + " refresh: " + e.getCause().getMessage(), "Refresh Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                });
+            }
+        };
+        SwingUtilities.invokeLater(() -> progressDialog.setVisible(true)); 
+        singleStockWorker.execute();
+    }
+
+    private void clearStockValues(int modelRow) {
+        String ticker = (String) tableModel.getValueAt(modelRow, getColumnIndexByName("Ticker"));
+        int confirm = JOptionPane.showConfirmDialog(
+                watchlistTable.getTopLevelAncestor(),
+                "Are you sure you want to clear all values for " + ticker + "?",
+                "Confirm Clear",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+
         if (confirm == JOptionPane.YES_OPTION) {
-            // Keep the name and ticker, set all numerical values to 0.0
-            for (int col = 2; col < tableModel.getColumnCount(); col++) {
+            for (int col = 0; col < tableModel.getColumnCount(); col++) { 
+                if (col == getColumnIndexByName("Name") || col == getColumnIndexByName("Ticker")) {
+                    continue; 
+                }
                 if (tableModel.getColumnClass(col) == Double.class) {
                     tableModel.setValueAt(0.0, modelRow, col);
-                } else if (col == 23) { // Industry column
+                } else if (tableModel.getColumnName(col).equals("Industry") || tableModel.getColumnName(col).equals("Refresh Date")) { 
                     tableModel.setValueAt("N/A", modelRow, col);
                 }
             }
-            
-            // Save the updated watchlist
             saveWatchlist();
-            
-            // Create and show a centered completion message
-            JOptionPane completionPane = new JOptionPane(
-                    "Values for " + ticker + " have been cleared.",
-                    JOptionPane.INFORMATION_MESSAGE);
-            
-            JDialog completionDialog = completionPane.createDialog(frame, "Clear Complete");
-            completionDialog.setLocationRelativeTo(null);
-            completionDialog.setVisible(true);
+            JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Values for " + ticker + " have been cleared.", "Clear Complete", JOptionPane.INFORMATION_MESSAGE);
         }
     }
-}
-
+    
     private void deleteStock() {
         int selectedRow = watchlistTable.getSelectedRow();
         if (selectedRow != -1) {
             int modelRow = watchlistTable.convertRowIndexToModel(selectedRow);
-            String ticker = (String) tableModel.getValueAt(modelRow, 1);
-            tableModel.removeRow(modelRow);
-            saveWatchlist();
-            System.out.println("Stock deleted successfully: " + ticker);
+            String ticker = (String) tableModel.getValueAt(modelRow, getColumnIndexByName("Ticker"));
+            int confirm = JOptionPane.showConfirmDialog(
+                    watchlistTable.getTopLevelAncestor(),
+                    "Are you sure you want to delete " + ticker + " from the watchlist?",
+                    "Confirm Delete",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+            if (confirm == JOptionPane.YES_OPTION) {
+                tableModel.removeRow(modelRow);
+                saveWatchlist();
+                System.out.println("Stock deleted successfully: " + ticker);
+                if (lastSuccessfullyProcessedIndex >= modelRow && lastSuccessfullyProcessedIndex > -1) { 
+                    lastSuccessfullyProcessedIndex--; 
+                } else if (modelRow < lastSuccessfullyProcessedIndex) {
+                    // This condition logic might need review based on whether lastSuccessfullyProcessedIndex refers to view or model index
+                    // Currently, it's intended to be a view index before conversion inside the worker.
+                }
+                updateRefreshButtonsState();
+            }
+        } else {
+            JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Please select a stock to delete.", "No Selection", JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
     private double round(double value, int places) {
-        if (places < 0) {
-            throw new IllegalArgumentException();
-        }
+        if (places < 0) throw new IllegalArgumentException();
         BigDecimal bd = BigDecimal.valueOf(value);
         bd = bd.setScale(places, RoundingMode.HALF_UP);
         return bd.doubleValue();
@@ -1114,831 +1161,512 @@ private void clearStockValues(int modelRow) {
     private JSONObject fetchStockData(String ticker) {
         String urlString = String.format("https://financialmodelingprep.com/api/v3/quote/%s?apikey=%s", ticker, API_KEY);
         HttpURLConnection connection = null;
-
         try {
             URL url = new URL(urlString);
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(5000);
-
             int responseCode = connection.getResponseCode();
             if (responseCode == 200) {
-                Scanner scanner = new Scanner(url.openStream());
-                String response = scanner.useDelimiter("\\Z").next();
-                scanner.close();
-
-                JSONArray data = new JSONArray(response);
-                if (data.length() > 0) {
-                    return data.getJSONObject(0);
-                } else {
-                    return null;
+                try (Scanner scanner = new Scanner(connection.getInputStream())) {
+                    String response = scanner.useDelimiter("\\A").next();
+                    JSONArray data = new JSONArray(response);
+                    return data.length() > 0 ? data.getJSONObject(0) : null;
                 }
+            } else {
+                 System.err.println("fetchStockData HTTP Error: " + responseCode + " for " + ticker);
             }
-            return null;
         } catch (Exception e) {
-            return null;
+            System.err.println("Exception in fetchStockData for " + ticker + ": " + e.getMessage());
+            e.printStackTrace(); 
         } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
+            if (connection != null) connection.disconnect();
         }
+        return null;
     }
 
     private JSONObject fetchStockRatios(String ticker) {
-        // Create a combined JSONObject to store results from both endpoints
         JSONObject combinedRatios = new JSONObject();
-
-        // First endpoint (key-metrics-ttm)
         String urlMetrics = String.format("https://financialmodelingprep.com/api/v3/key-metrics-ttm/%s?apikey=%s", ticker, API_KEY);
-        // Second endpoint (ratios-ttm)
         String urlRatios = String.format("https://financialmodelingprep.com/api/v3/ratios-ttm/%s?apikey=%s", ticker, API_KEY);
 
+        HttpURLConnection conn1 = null;
         try {
-            // Fetch data from first endpoint (key-metrics-ttm)
             URL url1 = new URL(urlMetrics);
-            HttpURLConnection conn1 = (HttpURLConnection) url1.openConnection();
+            conn1 = (HttpURLConnection) url1.openConnection();
             conn1.setRequestMethod("GET");
-
+            conn1.setConnectTimeout(5000); 
+            conn1.setReadTimeout(5000);
             if (conn1.getResponseCode() == 200) {
-                Scanner scanner1 = new Scanner(url1.openStream());
-                String response1 = scanner1.useDelimiter("\\Z").next();
-                scanner1.close();
-
-                JSONArray data1 = new JSONArray(response1);
-                if (data1.length() > 0) {
-                    // Copy all properties from first endpoint
-                    JSONObject metricsData = data1.getJSONObject(0);
-                    for (String key : metricsData.keySet()) {
-                        combinedRatios.put(key, metricsData.get(key));
+                try (Scanner scanner1 = new Scanner(conn1.getInputStream())) {
+                    String response1 = scanner1.useDelimiter("\\A").next();
+                    JSONArray data1 = new JSONArray(response1);
+                    if (data1.length() > 0) {
+                        JSONObject metricsData = data1.getJSONObject(0);
+                        for (String key : metricsData.keySet()) combinedRatios.put(key, metricsData.get(key));
                     }
                 }
+            } else {
+                 System.err.println("fetchStockRatios (key-metrics-ttm) HTTP Error: " + conn1.getResponseCode() + " for " + ticker);
             }
-            conn1.disconnect();
+        } catch (Exception e) {
+             System.err.println("Exception in fetchStockRatios (key-metrics-ttm) for " + ticker + ": " + e.getMessage());
+             e.printStackTrace();
+        } finally {
+            if (conn1 != null) conn1.disconnect();
+        }
 
-            // Fetch data from second endpoint (ratios-ttm)
+        HttpURLConnection conn2 = null;
+        try {
             URL url2 = new URL(urlRatios);
-            HttpURLConnection conn2 = (HttpURLConnection) url2.openConnection();
+            conn2 = (HttpURLConnection) url2.openConnection();
             conn2.setRequestMethod("GET");
-
+            conn2.setConnectTimeout(5000);
+            conn2.setReadTimeout(5000);
             if (conn2.getResponseCode() == 200) {
-                Scanner scanner2 = new Scanner(url2.openStream());
-                String response2 = scanner2.useDelimiter("\\Z").next();
-                scanner2.close();
-
-                JSONArray data2 = new JSONArray(response2);
-                if (data2.length() > 0) {
-                    // Copy all properties from second endpoint
-                    JSONObject ratiosData = data2.getJSONObject(0);
-                    for (String key : ratiosData.keySet()) {
-                        // Only overwrite if the value doesn't exist or is 0
-                        if (!combinedRatios.has(key) || combinedRatios.getDouble(key) == 0) {
-                            combinedRatios.put(key, ratiosData.get(key));
+                 try (Scanner scanner2 = new Scanner(conn2.getInputStream())) {
+                    String response2 = scanner2.useDelimiter("\\A").next();
+                    JSONArray data2 = new JSONArray(response2);
+                    if (data2.length() > 0) {
+                        JSONObject ratiosData = data2.getJSONObject(0);
+                        for (String key : ratiosData.keySet()) {
+                            if (!combinedRatios.has(key) || (combinedRatios.optDouble(key, Double.NaN) == 0.0 && ratiosData.optDouble(key, Double.NaN) != 0.0) ) { 
+                                combinedRatios.put(key, ratiosData.get(key));
+                            }
                         }
                     }
                 }
+            } else {
+                 System.err.println("fetchStockRatios (ratios-ttm) HTTP Error: " + conn2.getResponseCode() + " for " + ticker);
             }
-            conn2.disconnect();
-
-            return combinedRatios;
-
-        } catch (IOException e) {
+        } catch (Exception e) {
+            System.err.println("Exception in fetchStockRatios (ratios-ttm) for " + ticker + ": " + e.getMessage());
             e.printStackTrace();
-            return null;
+        } finally {
+            if (conn2 != null) conn2.disconnect();
         }
+        return combinedRatios;
     }
-
+    
     private double fetchAveragePB(String ticker) {
         String urlString = String.format("https://financialmodelingprep.com/api/v3/key-metrics/%s?period=annual&limit=20&apikey=%s", ticker, API_KEY);
         HttpURLConnection connection = null;
-        double sum = 0;
-        int count = 0;
-
+        double sum = 0; int count = 0;
         try {
             URL url = new URL(urlString);
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
-
-            int responseCode = connection.getResponseCode();
-            if (responseCode == 200) {
-                Scanner scanner = new Scanner(url.openStream());
-                String response = scanner.useDelimiter("\\Z").next();
-                scanner.close();
-
-                JSONArray data = new JSONArray(response);
-                for (int i = 0; i < data.length(); i++) {
-                    JSONObject metrics = data.getJSONObject(i);
-                    double pbRatio = metrics.optDouble("pbRatio", 0.0);
-                    if (pbRatio != 0.0) {
-
-                        if (pbRatio > 0) {
-                            pbRatio = Math.min(pbRatio, 10.0);
-                        } else {
-                            pbRatio = Math.max(pbRatio, -10.0);
+            connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
+            if (connection.getResponseCode() == 200) {
+                try(Scanner scanner = new Scanner(connection.getInputStream())) {
+                    String response = scanner.useDelimiter("\\A").next();
+                    if (response.trim().isEmpty() || response.trim().equals("[]")) return 0.0; 
+                    JSONArray data = new JSONArray(response);
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject metrics = data.getJSONObject(i);
+                        double pbRatio = metrics.optDouble("pbRatio", Double.NaN); 
+                        if (!Double.isNaN(pbRatio) && pbRatio != 0.0) { 
+                            pbRatio = Math.max(-10.0, Math.min(pbRatio, 10.0)); 
+                            sum += pbRatio; count++;
                         }
-
-                        sum += pbRatio;
-                        count++;
                     }
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-
+        } catch (Exception e) { e.printStackTrace(); } 
+        finally { if (connection != null) connection.disconnect(); }
         return count > 0 ? round(sum / count, 2) : 0.0;
     }
 
     private double fetchAveragePE(String ticker) {
         String urlString = String.format("https://financialmodelingprep.com/api/v3/key-metrics/%s?period=annual&limit=20&apikey=%s", ticker, API_KEY);
         HttpURLConnection connection = null;
-        double sum = 0;
-        int count = 0;
-
+        double sum = 0; int count = 0;
         try {
             URL url = new URL(urlString);
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
-
-            int responseCode = connection.getResponseCode();
-            if (responseCode == 200) {
-                Scanner scanner = new Scanner(url.openStream());
-                String response = scanner.useDelimiter("\\Z").next();
-                scanner.close();
-
-                JSONArray data = new JSONArray(response);
-                for (int i = 0; i < data.length(); i++) {
-                    JSONObject metrics = data.getJSONObject(i);
-                    double peRatio = metrics.optDouble("peRatio", 0.0);
-                     if (peRatio > 0.0) {  // Only include positive PE ratios
-                    // Cap PE ratios at 30
-                        peRatio = Math.min(peRatio, 30.0);
-                        sum += peRatio;
-                        count++;
+            connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
+            if (connection.getResponseCode() == 200) {
+                try(Scanner scanner = new Scanner(connection.getInputStream())) {
+                    String response = scanner.useDelimiter("\\A").next();
+                     if (response.trim().isEmpty() || response.trim().equals("[]")) return 0.0;
+                    JSONArray data = new JSONArray(response);
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject metrics = data.getJSONObject(i);
+                        double peRatio = metrics.optDouble("peRatio", Double.NaN);
+                        if (!Double.isNaN(peRatio) && peRatio > 0.0) { 
+                            peRatio = Math.min(peRatio, 40.0); 
+                            sum += peRatio; count++;
+                        }
                     }
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-
+        } catch (Exception e) { e.printStackTrace(); }
+        finally { if (connection != null) connection.disconnect(); }
         return count > 0 ? round(sum / count, 2) : 0.0;
     }
-
+    
     private double fetchAverageROE(String ticker) {
-        String urlString = String.format("https://financialmodelingprep.com/api/v3/key-metrics/%s?period=annual&limit=20&apikey=%s", ticker, API_KEY);
+        String urlString = String.format("https://financialmodelingprep.com/api/v3/ratios/%s?period=annual&limit=20&apikey=%s", ticker, API_KEY);
         HttpURLConnection connection = null;
-        double sum = 0;
-        int count = 0;
-
+        double sum = 0; int count = 0;
         try {
             URL url = new URL(urlString);
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
-
-            int responseCode = connection.getResponseCode();
-            if (responseCode == 200) {
-                Scanner scanner = new Scanner(url.openStream());
-                String response = scanner.useDelimiter("\\Z").next();
-                scanner.close();
-
-                JSONArray data = new JSONArray(response);
-                for (int i = 0; i < data.length(); i++) {
-                    JSONObject metrics = data.getJSONObject(i);
-                    double roe = metrics.optDouble("roe", 0.0);
-                    if (roe != 0.0) {
-                        sum += roe;
-                        count++;
+            connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
+            if (connection.getResponseCode() == 200) {
+                try(Scanner scanner = new Scanner(connection.getInputStream())) {
+                    String response = scanner.useDelimiter("\\A").next();
+                    if (response.trim().isEmpty() || response.trim().equals("[]")) return 0.0;
+                    JSONArray data = new JSONArray(response);
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject metrics = data.getJSONObject(i);
+                        double roe = metrics.optDouble("returnOnEquity", metrics.optDouble("roe", Double.NaN)); 
+                        if (!Double.isNaN(roe) && roe != 0.0) { 
+                             roe = Math.max(-0.50, Math.min(roe, 0.50)); 
+                            sum += roe; count++;
+                        }
                     }
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-
+        } catch (Exception e) { e.printStackTrace(); }
+        finally { if (connection != null) connection.disconnect(); }
         return count > 0 ? round(sum / count, 2) : 0.0;
     }
 
     private double calculateGrahamNumber(double price, double peAvg, double pbAvg, double epsTtm, double pbTtm) {
-        if (peAvg <= 0 || pbAvg <= 0 || price <= 0 || pbTtm <= 0 || epsTtm <= 0) {
+        if (epsTtm <= 0 || price <= 0 || pbTtm <= 0) { 
             return 0.0;
         }
-
-        // Calculate Graham Number using both average and current values
-        // The formula: sqrt(peAvg * pbAvg * epsTtm * (1/pbTtm) * price)
-        double grahamNumber = Math.sqrt(peAvg * pbAvg * epsTtm * (1 / pbTtm) * price);
-
-        return round(grahamNumber, 2);
+        double bvps = price / pbTtm; 
+        double grahamValue = Math.sqrt(22.5 * epsTtm * bvps);
+        return round(grahamValue, 2);
     }
-
+    
     private double convertGbxToGbp(double price, String ticker) {
-        // Check if the ticker is from London Stock Exchange (usually ends with .L)
         if (ticker != null && ticker.endsWith(".L")) {
-            // Convert from GBX to GBP (divide by 100)
-            return round(price / 100, 2);
+            return round(price / 100.0, 2);
         }
         return price;
     }
 
-    private double calculateAScore(double pbAvg, double pbTtm, double peAvg, double peTtm, double payoutRatio, double debtToEquity,
-            double roe, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
-            double currentRatio, double quickRatio, double grahamNumberTerm, double price, double priceToFCF_TTM, double priceToFCF_AVG, double prAvg) {
-        double peRatioTerm = 0;
-        double pbRatioTerm = 0;
-        double payoutRatioTerm = 0;
-        double dividendYieldTerm = 0;
-        double debtToEquityTerm = 0;
-        double deAvgTerm = 0;
-        double roeTerm = 0;
-        double roeAvgTerm = 0;
-        double epsGrowth1Term = 0;
-        double epsGrowth2Term = 0;
-        double epsGrowth3Term = 0;
-        double currentRatioTerm = 0;
-        double quickRatioTerm = 0;
-        double pfcfTerm = 0;
-        double prAvgTerm = 0;
-
-// Conditions for debt to Equity
-        if (debtToEquity == 0 || deAvg == 0.0) {
-            deAvgTerm = 0;
-        } else {
-            double ratio = deAvg / debtToEquity;
-            if (ratio < 1) {
-                deAvgTerm = 0;
-            } else if (ratio >= 1 && ratio < 1.5) {
-                deAvgTerm = 1;
-            } else if (ratio >= 1.5) {
-                deAvgTerm = 2;
-            }
-        }
-
-        // Conditions for peRatioTerm
-        if (peTtm <= 0) {
-            peRatioTerm = -1;
-        } else if (peAvg / peTtm < 1) {
-            peRatioTerm = 0;
-        } else if (peAvg / peTtm >= 1 && peAvg / peTtm < 1.5) {
-            peRatioTerm = 1;
-        } else if (peAvg / peTtm >= 1.5) {
-            peRatioTerm = 2;
-        }
-
-        // Conditions for pbRatioTerm
-        if (pbTtm <= 0 || pbAvg / pbTtm < 1) {
-            pbRatioTerm = -2;
-        } else if (pbAvg / pbTtm >= 1 && pbAvg / pbTtm < 1.5) {
-            pbRatioTerm = 1;
-        } else if (pbAvg / pbTtm >= 1.5) {
-            pbRatioTerm = 2;
-        }
-
-        if (priceToFCF_TTM <= 0) {
-            pfcfTerm = -2;  // Penalty for negative FCF
-        } else if (priceToFCF_AVG / priceToFCF_TTM < 1) {
-            pfcfTerm = -1;  // Current PFCF is higher than average (potentially overvalued)
-        } else if (priceToFCF_AVG / priceToFCF_TTM >= 1 && priceToFCF_AVG / priceToFCF_TTM < 1.5) {
-            pfcfTerm = 1;   // Current PFCF is lower than average but not significantly
-        } else if (priceToFCF_AVG / priceToFCF_TTM >= 1.5) {
-            pfcfTerm = 2;   // Current PFCF is significantly lower than average (potentially undervalued)
-        }
-
-        // Conditions for dividendYieldTerm
-// Conditions for dividendYieldTerm
-        if (dividendYieldTTM < 3) {
-            dividendYieldTerm = 0;
-        } else if (dividendYieldTTM >= 3 && dividendYieldTTM < 6) {
-            dividendYieldTerm = 1;
-        } else if (dividendYieldTTM >= 6) {
-            dividendYieldTerm = 2;
-        }
-
-        // Conditions for payoutRatioTerm
-        if (payoutRatio <= 0 || payoutRatio >= 1) {
-            payoutRatioTerm = 0;
-        } else if (payoutRatio >= 0.5 && payoutRatio < 1) {
-            payoutRatioTerm = 1;
-        } else {
-            payoutRatioTerm = 2;
-        }
-
-        // Conditions for debtToEquityTerm
-        if (debtToEquity <= 0 || (double) debtToEquity > 1) {
-            debtToEquityTerm = 0;
-        } else if ((double) debtToEquity >= 0.5 && (double) debtToEquity <= 1) {
-            debtToEquityTerm = 1;
-        } else {
-            debtToEquityTerm = 2;
-        }
-
-        // Conditions for roe
-        if (roe < 0.1) {
-            roeTerm = 0;
-        } else if (roe >= 0.1 && roe < 0.2) {
-            roeTerm = 1;
-        } else if (roe >= 0.2) {
-            roeTerm = 2;
-        }
-
-        // Conditions for roeAvg
-        if (roe <= 0 || roeAvg <= 0) {
-            roeAvgTerm = -1;
-        } else if (roe / roeAvg < 1) {
-            roeAvgTerm = 0;
-        } else if (roe / roeAvg >= 1 && roe / roeAvg < 1.5) {
-            roeAvgTerm = 1;
-        } else if (roe / roeAvg >= 1.5) {
-            roeAvgTerm = 2;
-        }
-
-        // Conditions for epsGrowht1
-        if (epsGrowth1 <= -25) {
-            epsGrowth1Term = -2;
-        } else if (epsGrowth1 > -25 && epsGrowth1 <= 0) {
-            epsGrowth1Term = -1;
-        } else if (epsGrowth1 > 0 && epsGrowth1 < 25) {
-            epsGrowth1Term = 0;
-        } else if (epsGrowth1 >= 25 && epsGrowth1 < 75) {
-            epsGrowth1Term = 1;
-        } else if (epsGrowth1 >= 75) {
-            epsGrowth1Term = 2;
-
-        }
-
-        // Conditions for epsGrowht2
-        if (epsGrowth2 <= -25) {
-            epsGrowth2Term = -2;
-        } else if (epsGrowth2 > -25 && epsGrowth2 <= 0) {
-            epsGrowth2Term = -1;
-        } else if (epsGrowth2 > 0 && epsGrowth2 < 25) {
-            epsGrowth2Term = 0;
-        } else if (epsGrowth2 >= 25 && epsGrowth2 < 75) {
-            epsGrowth2Term = 1;
-        } else if (epsGrowth2 >= 75) {
-            epsGrowth2Term = 2;
-        }
-
-        // Conditions for epsGrowht3
-        if (epsGrowth3 <= -25) {
-            epsGrowth3Term = -2;
-        } else if (epsGrowth3 > -25 && epsGrowth3 <= 0) {
-            epsGrowth3Term = -1;
-        } else if (epsGrowth3 > 0 && epsGrowth3 < 25) {
-            epsGrowth3Term = 0;
-        } else if (epsGrowth3 >= 25 && epsGrowth3 < 75) {
-            epsGrowth3Term = 1;
-        } else if (epsGrowth3 >= 75) {
-            epsGrowth3Term = 2;
-        }
-
-        // Conditions for Graham Number Term
-        double percentDiff = (grahamNumberTerm - price) / price * 100;
-
-        if (percentDiff <= -25) {
-            grahamNumberTerm = -2;
-        } else if (percentDiff > -25 && percentDiff <= 0) {
-            grahamNumberTerm = -1;
-        } else if (percentDiff > 0 && percentDiff <= 25) {
-            grahamNumberTerm = 0;
-        } else if (percentDiff > 25 && percentDiff <= 50) {
-            grahamNumberTerm = 1;
-        } else if (percentDiff > 50) {
-            grahamNumberTerm = 2;
-        }
-
-        // Conditions for current ratio
-        if (currentRatio < 1) {
-            currentRatioTerm = 0;
-        } else if (currentRatio >= 1 && currentRatio < 2) {
-            currentRatioTerm = 1;
-        } else if (currentRatio >= 2) {
-            currentRatioTerm = 2;
-        }
-
-        // Conditions for quick ratio
-        if (quickRatio < 1) {
-            quickRatioTerm = 0;
-        } else if (quickRatio >= 1 && quickRatio < 2) {
-            quickRatioTerm = 1;
-        } else if (quickRatio >= 2) {
-            quickRatioTerm = 2;
-        }
-        
-         // Conditions for prAvgTerm calculation
-    if (prAvg > 0 && payoutRatio >= 0) {
-        if (payoutRatio < 0.5 * prAvg) {
-            prAvgTerm = 2;  // payoutratio < 50% prAvg
-        } else if (payoutRatio < prAvg) {
-            prAvgTerm = 1;  // 50% prAvg <= payoutratio < 100% prAvg
-        } else {
-            prAvgTerm = 0;  // payoutratio >= 100% prAvg
-        }
+    private double calculateEpsGrowth1(double epsCurrentYear, double epsTtm) {
+        if (epsTtm == 0) return 0.0;
+        if (epsTtm < 0 && epsCurrentYear > 0) return 100.0; 
+        if (epsTtm > 0 && epsCurrentYear < 0) return -100.0; 
+        return round(100 * (epsCurrentYear - epsTtm) / Math.abs(epsTtm), 2);
     }
 
-        return (payoutRatioTerm + deAvgTerm + debtToEquityTerm + dividendYieldTerm + peRatioTerm + pbRatioTerm
-                + payoutRatioTerm + epsGrowth1Term + epsGrowth3Term + epsGrowth2Term + currentRatioTerm
-                + quickRatioTerm + roeTerm + roeAvgTerm + grahamNumberTerm + pfcfTerm + prAvgTerm);
+    private double calculateEpsGrowth2(double epsCurrentYear, double epsNextYear) {
+        if (epsCurrentYear == 0) return 0.0;
+         if (epsCurrentYear < 0 && epsNextYear > 0) return 100.0;
+        if (epsCurrentYear > 0 && epsNextYear < 0) return -100.0;
+        return round(100 * (epsNextYear - epsCurrentYear) / Math.abs(epsCurrentYear), 2);
+    }
 
+    private double calculateEpsGrowth3(double epsYear3, double epsNextYear) {
+        if (epsNextYear == 0) return 0.0;
+        if (epsNextYear < 0 && epsYear3 > 0) return 100.0;
+        if (epsNextYear > 0 && epsYear3 < 0) return -100.0;
+        return round(100 * (epsYear3 - epsNextYear) / Math.abs(epsNextYear), 2);
+    }
+    
+    private double calculatePEForward(double price, double eps) {
+        if (eps <= 0) return 0.0; 
+        return round(price / eps, 2);
+    }
+
+    // getPEForwardColumnNames was already defined as instance method.
+
+    private double calculateAScore(double pbAvg, double pbTtm, double peAvg, double peTtm, double payoutRatio, double debtToEquity,
+                               double roeTtm, double roeAvg, double dividendYieldTTM, double deAvg, double epsGrowth1, double epsGrowth2, double epsGrowth3,
+                               double currentRatioVal, double quickRatio, double grahamNumber, double price, double priceToFCF_TTM, double PriceToFCF_Avg, double prAvg) {
+        double score = 0;
+        if (peTtm > 0 && peAvg > 0) { if (peTtm < peAvg * 0.75) score += 2; else if (peTtm < peAvg) score += 1; } 
+        else if (peTtm > 0 && peTtm < 15) score +=1;
+
+        if (pbTtm > 0 && pbAvg > 0) { if (pbTtm < pbAvg * 0.75) score += 2; else if (pbTtm < pbAvg) score += 1; } 
+        else if (pbTtm > 0 && pbTtm < 1.5) score +=1;
+
+        if (payoutRatio > 0.05 && payoutRatio <= 0.60) score += 2; 
+        else if (payoutRatio > 0.60 && payoutRatio <= 0.80) score += 1;
+
+        if (dividendYieldTTM >= 0.04) score += 2; 
+        else if (dividendYieldTTM >= 0.02) score += 1;
+
+        if (debtToEquity >= 0 && deAvg > 0) { if (debtToEquity < deAvg * 0.75) score += 2; else if (debtToEquity < deAvg) score += 1;} 
+        else if (debtToEquity >= 0 && debtToEquity < 0.5) score += 2; 
+        else if (debtToEquity >= 0 && debtToEquity < 1.0) score +=1;
+
+        if (roeTtm > 0 && roeAvg != 0) { if (roeTtm > roeAvg * 1.25) score += 2; else if (roeTtm > roeAvg) score += 1;} 
+        else if (roeTtm > 0.15) score += 2; 
+        else if (roeTtm > 0.10) score += 1;
+
+        if (epsGrowth1 > 10) score += 1; else if (epsGrowth1 < -10) score -=1;
+        if (epsGrowth2 > 10) score += 1; else if (epsGrowth2 < -10) score -=1;
+        if (epsGrowth3 > 10) score += 1; else if (epsGrowth3 < -10) score -=1;
+        
+        if (currentRatioVal >= 1.5) score += 1;
+
+        if (price > 0 && grahamNumber > 0) { if (grahamNumber > price * 1.25) score += 2; else if (grahamNumber > price) score += 1; }
+        
+        if (priceToFCF_TTM > 0 && PriceToFCF_Avg > 0) { if (priceToFCF_TTM < PriceToFCF_Avg * 0.75) score += 2; else if (priceToFCF_TTM < PriceToFCF_Avg) score += 1; } 
+        else if (priceToFCF_TTM > 0 && priceToFCF_TTM < 15) score +=1;
+
+        if (prAvg > 0 && payoutRatio > 0) { if (payoutRatio < prAvg * 0.75) score += 2; else if (payoutRatio < prAvg) score += 1; }
+
+        return Math.max(0, score); 
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new Watchlist().createAndShowGUI());
     }
 
+    private double getPriceForRow(int modelRow) {
+        int priceColumn = getColumnIndexByName("Price"); 
+        if (priceColumn != -1 && modelRow >=0 && modelRow < tableModel.getRowCount()) { 
+            Object value = tableModel.getValueAt(modelRow, priceColumn);
+            if (value instanceof Double) return (Double) value;
+        }
+        return 0.0;
+    }
+     private double getPEAvgForRow(int modelRow) {
+        int colIdx = getColumnIndexByName("PE Avg"); 
+        if (colIdx != -1 && modelRow >=0 && modelRow < tableModel.getRowCount() && tableModel.getValueAt(modelRow, colIdx) instanceof Double) {
+            return (Double) tableModel.getValueAt(modelRow, colIdx);
+        }
+        return 0.0;
+    }
+
+    private double getPBAvgForRow(int modelRow) {
+        int colIdx = getColumnIndexByName("PB Avg"); 
+        if (colIdx != -1 && modelRow >=0 && modelRow < tableModel.getRowCount() && tableModel.getValueAt(modelRow, colIdx) instanceof Double) {
+            return (Double) tableModel.getValueAt(modelRow, colIdx);
+        }
+        return 0.0;
+    }
+    
+    private double getPriceToFCFAvgForRow(int modelRow) {
+        int colIdx = getColumnIndexByName("PFCF Avg"); 
+        if (colIdx != -1 && modelRow >=0 && modelRow < tableModel.getRowCount() && tableModel.getValueAt(modelRow, colIdx) instanceof Double) {
+            return (Double) tableModel.getValueAt(modelRow, colIdx);
+        }
+        return 0.0;
+    }
+    
+    private double getROEAvgForRow(int modelRow) {
+        int colIdx = getColumnIndexByName("ROE Avg"); 
+         if (colIdx != -1 && modelRow >=0 && modelRow < tableModel.getRowCount() && tableModel.getValueAt(modelRow, colIdx) instanceof Double) {
+            return (Double) tableModel.getValueAt(modelRow, colIdx);
+        }
+        return 0.0;
+    }
+
+    private double getDEAvgForRow(int modelRow) {
+        int colIdx = getColumnIndexByName("DE Avg"); 
+        if (colIdx != -1 && modelRow >=0 && modelRow < tableModel.getRowCount() && tableModel.getValueAt(modelRow, colIdx) instanceof Double) {
+            return (Double) tableModel.getValueAt(modelRow, colIdx);
+        }
+        return 0.0;
+    }
+
+
     private void exportToExcel() {
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.setDialogTitle("Save Excel File");
-        fileChooser.setSelectedFile(new File("watchlist.xlsx"));
+        fileChooser.setSelectedFile(new File("watchlist_export.xlsx"));
 
-        if (fileChooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        if (fileChooser.showSaveDialog(watchlistTable.getTopLevelAncestor()) == JFileChooser.APPROVE_OPTION) {
             File file = fileChooser.getSelectedFile();
-            if (!file.getName().endsWith(".xlsx")) {
+            if (!file.getName().toLowerCase().endsWith(".xlsx")) {
                 file = new File(file.getAbsolutePath() + ".xlsx");
             }
 
             try (XSSFWorkbook workbook = new XSSFWorkbook()) {
                 Sheet sheet = workbook.createSheet("Watchlist");
 
-                // Create all styles
                 XSSFCellStyle headerStyle = workbook.createCellStyle();
+                org.apache.poi.ss.usermodel.Font headerFont = workbook.createFont(); 
+                headerFont.setBold(true);
+                headerStyle.setFont(headerFont);
                 headerStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
                 headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
                 headerStyle.setBorderBottom(BorderStyle.THIN);
-
-                // Create all custom color styles
-                XSSFCellStyle normalStyle = workbook.createCellStyle();
+                
                 XSSFCellStyle lightRedStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 235, (byte) 235});
+                XSSFCellStyle mediumRedStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte)255, (byte)200, (byte)200});
+                XSSFCellStyle darkRedStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte)255, (byte)180, (byte)180});
                 XSSFCellStyle lightYellowStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 255, (byte) 220});
                 XSSFCellStyle lightGreenStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 220, (byte) 255, (byte) 220});
                 XSSFCellStyle mediumGreenStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 198, (byte) 255, (byte) 198});
                 XSSFCellStyle darkGreenStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 178, (byte) 255, (byte) 178});
                 XSSFCellStyle lightPinkStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 230, (byte) 230});
                 XSSFCellStyle mediumPinkStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 200, (byte) 200});
-                XSSFCellStyle darkPinkStyle = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 180, (byte) 180});
+                XSSFCellStyle darkPinkStyleExcel = CellsFormat.createCustomColorStyle(workbook, new byte[]{(byte) 255, (byte) 180, (byte) 180}); 
+                XSSFCellStyle normalStyle = workbook.createCellStyle(); 
 
-                // Get current column order
+
                 TableColumnModel columnModel = watchlistTable.getColumnModel();
-                int columnCount = columnModel.getColumnCount();
-
-                // Create header row
-                Row headerRow = sheet.createRow(0);
-                for (int i = 0; i < columnCount; i++) {
-                    TableColumn tableColumn = columnModel.getColumn(i);
-                    int modelIndex = tableColumn.getModelIndex();
-                    Cell cell = headerRow.createCell(i);
-                    cell.setCellValue(tableModel.getColumnName(modelIndex));
-                    cell.setCellStyle(headerStyle);
+                Row excelHeaderRow = sheet.createRow(0);
+                int excelColIdx = 0;
+                for (int viewCol = 0; viewCol < watchlistTable.getColumnCount(); viewCol++) {
+                    TableColumn tableColumn = columnModel.getColumn(viewCol);
+                    if (tableColumn.getMaxWidth() > 0) { 
+                        Cell cell = excelHeaderRow.createCell(excelColIdx++); 
+                        cell.setCellValue(tableModel.getColumnName(tableColumn.getModelIndex()));
+                        cell.setCellStyle(headerStyle);
+                    }
                 }
+                
+                DataFormat dataFormat = workbook.createDataFormat();
 
-                // Create data rows
-                for (int row = 0; row < watchlistTable.getRowCount(); row++) {
-                    Row dataRow = sheet.createRow(row + 1);
-                    int modelRow = watchlistTable.convertRowIndexToModel(row);
-
-                    for (int viewCol = 0; viewCol < columnCount; viewCol++) {
+                for (int tblViewRow = 0; tblViewRow < watchlistTable.getRowCount(); tblViewRow++) { 
+                    int tblModelRow = watchlistTable.convertRowIndexToModel(tblViewRow); 
+                    Row excelDataRow = sheet.createRow(tblViewRow + 1);
+                    excelColIdx = 0; 
+                    
+                    for (int viewCol = 0; viewCol < watchlistTable.getColumnCount(); viewCol++) {
                         TableColumn tableColumn = columnModel.getColumn(viewCol);
-                        int modelCol = tableColumn.getModelIndex();
-                        String columnName = tableModel.getColumnName(modelCol);
-                        Object value = tableModel.getValueAt(modelRow, modelCol);
-                        Cell cell = dataRow.createCell(viewCol);
+                        if (tableColumn.getMaxWidth() == 0) continue; 
 
-                        if (value instanceof Number) {
-                            double numValue = ((Number) value).doubleValue();
+                        int modelCol = tableColumn.getModelIndex();
+                        Object value = tableModel.getValueAt(tblModelRow, modelCol); 
+                        Cell cell = excelDataRow.createCell(excelColIdx++);
+                        String columnName = tableModel.getColumnName(modelCol);
+
+                        if (value instanceof Double) {
+                            double numValue = (Double) value;
                             cell.setCellValue(numValue);
+                             XSSFCellStyle cellStyle = workbook.createCellStyle(); 
+                             cellStyle.cloneStyleFrom(normalStyle); 
+                             cellStyle.setDataFormat(dataFormat.getFormat("0.00"));
 
                             if (columnName.equals("Graham Number")) {
-                                double price = getPriceForRow(modelRow);
+                                double price = getPriceForRow(tblModelRow); 
                                 if (price > 0) {
                                     double percentDiff = (numValue - price) / price * 100;
-
-                                    if (percentDiff > 0) {
-                                        if (percentDiff <= 25) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (percentDiff <= 50) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {
-                                        percentDiff = Math.abs(percentDiff);
-                                        if (percentDiff <= 25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (percentDiff <= 50) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
+                                    if (percentDiff > 50) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (percentDiff > 25) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (percentDiff > 0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (percentDiff <= 0 && percentDiff > -25) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor()); 
+                                    else if (percentDiff <= -25 && percentDiff > -50) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else if (percentDiff <= -50) cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
                                 }
-                            } else if (columnName.equals("PE TTM")) {
-                                double peAvg = getPEAvgForRow(modelRow);
+                            } else if (columnName.equals("PE TTM") || columnName.startsWith("PE FWD")) {
+                                double peAvg = getPEAvgForRow(tblModelRow); 
                                 if (peAvg > 0 && numValue > 0) {
                                     double ratio = numValue / peAvg;
-
-                                    if (ratio < 1) {  // PE TTM is lower than average (potentially undervalued)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // PE TTM is higher than average (potentially overvalued)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
-                            } else if (columnName.startsWith("PE FWD")) {
-                                double peAvg = getPEAvgForRow(modelRow);
-                                if (peAvg > 0 && numValue > 0) {
-                                    double ratio = numValue / peAvg;
-
-                                    if (ratio < 1) {  // Forward PE is lower than average (potentially undervalued)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // Forward PE is higher than average (potentially overvalued)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
+                                    if (ratio < 0.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 0.75) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.25) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.5) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
+                                } else if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                else if (numValue == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor());
                             } else if (columnName.equals("PB TTM")) {
-                                double pbAvg = getPBAvgForRow(modelRow);
-                                if (pbAvg > 0 && numValue > 0) {
+                                double pbAvg = getPBAvgForRow(tblModelRow);
+                                 if (pbAvg > 0 && numValue > 0) {
                                     double ratio = numValue / pbAvg;
-
-                                    if (ratio < 1) {  // PB TTM is lower than average (potentially undervalued)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // PB TTM is higher than average (potentially overvalued)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
+                                    if (ratio < 0.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 0.75) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.25) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.5) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
+                                 } else if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                 else if (numValue == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor());
                             } else if (columnName.equals("P/FCF")) {
-                                double pfcfAvg = getPriceToFCFAvgForRow(modelRow);
+                                double pfcfAvg = getPriceToFCFAvgForRow(tblModelRow);
                                 if (pfcfAvg > 0 && numValue > 0) {
                                     double ratio = numValue / pfcfAvg;
-
-                                    if (ratio < 1) {  // P/FCF TTM is lower than average (better valuation)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // P/FCF TTM is higher than average (worse valuation)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
+                                    if (ratio < 0.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 0.75) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.25) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.5) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
+                                } else if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                else if (numValue == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor());
                             } else if (columnName.equals("ROE TTM")) {
-                                double roeAvg = getROEAvgForRow(modelRow);
-                                if (roeAvg > 0 && numValue > 0) {
-                                    double ratio = numValue / roeAvg;
-
-                                    if (ratio > 1) {  // ROE TTM is higher than average (better performance)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // ROE TTM is lower than average (worse performance)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
+                                double roeAvg = getROEAvgForRow(tblModelRow);
+                                 if (numValue > 0 && roeAvg != 0) { 
+                                    double ratio = numValue / roeAvg; 
+                                    if (ratio > 1.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio > 1.25) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio > 1.0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio > 0.75) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor());
+                                    else if (ratio > 0.5) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
+                                 } else if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                 else if (numValue == 0 && roeAvg == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor()); 
+                                 else if (numValue > 0 && numValue < 0.10) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor()); 
+                                 else if (numValue > 0.15) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor()); 
+                                 else if (numValue > 0.10) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
                             } else if (columnName.equals("Debt to Equity")) {
-                                double deAvg = getDEAvgForRow(modelRow);
-                                if (deAvg > 0 && numValue > 0) {
-                                    double ratio = numValue / deAvg;
-
-                                    if (ratio < 1) {  // Debt to Equity is lower than average (better)
-                                        if (ratio >= 0.75) {
-                                            cell.setCellStyle(lightGreenStyle);
-                                        } else if (ratio >= 0.5) {
-                                            cell.setCellStyle(mediumGreenStyle);
-                                        } else {
-                                            cell.setCellStyle(darkGreenStyle);
-                                        }
-                                    } else {  // Debt to Equity is higher than average (worse)
-                                        if (ratio <= 1.25) {
-                                            cell.setCellStyle(lightPinkStyle);
-                                        } else if (ratio <= 1.5) {
-                                            cell.setCellStyle(mediumPinkStyle);
-                                        } else {
-                                            cell.setCellStyle(darkPinkStyle);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Normal number coloring
-                                if (numValue < 0) {
-                                    cell.setCellStyle(lightRedStyle);
-                                } else if (numValue == 0.0) {
-                                    cell.setCellStyle(lightYellowStyle);
-                                } else {
-                                    cell.setCellStyle(normalStyle);
-                                }
+                                double deAvg = getDEAvgForRow(tblModelRow);
+                                 if (deAvg > 0 && numValue >= 0) { 
+                                    double ratio = numValue / deAvg; 
+                                    if (ratio < 0.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 0.75) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.0) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.25) cellStyle.setFillForegroundColor(lightPinkStyle.getFillForegroundColorColor());
+                                    else if (ratio < 1.5) cellStyle.setFillForegroundColor(mediumPinkStyle.getFillForegroundColorColor());
+                                    else cellStyle.setFillForegroundColor(darkPinkStyleExcel.getFillForegroundColorColor());
+                                 } else if (numValue < 0) cellStyle.setFillForegroundColor(darkRedStyle.getFillForegroundColorColor()); 
+                                 else if (numValue >= 0 && numValue < 0.5) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor()); 
+                                 else if (numValue < 1.0) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                            } else if (columnName.equals("Payout Ratio")) {
+                                if (numValue < 0) cellStyle.setFillForegroundColor(darkRedStyle.getFillForegroundColorColor()); 
+                                else if (numValue == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor());
+                                else if (numValue > 0 && numValue <= 0.33) cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());    
+                                else if (numValue > 0.33 && numValue <= 0.66) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor()); 
+                                else if (numValue > 0.66 && numValue < 1.00) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());   
+                                else if (numValue >= 1.00 && numValue <= 1.25) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());     
+                                else if (numValue > 1.25 && numValue <= 1.50) cellStyle.setFillForegroundColor(mediumRedStyle.getFillForegroundColorColor());    
+                                else if (numValue > 1.50) cellStyle.setFillForegroundColor(darkRedStyle.getFillForegroundColorColor());      
+                            } else if (columnName.startsWith("EPS Growth")) {
+                                if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                else if (numValue < 15) cellStyle.setFillForegroundColor(lightGreenStyle.getFillForegroundColorColor());
+                                else if (numValue < 30) cellStyle.setFillForegroundColor(mediumGreenStyle.getFillForegroundColorColor());
+                                else cellStyle.setFillForegroundColor(darkGreenStyle.getFillForegroundColorColor());
                             }
-                        } else if (value != null) {
+                            else { 
+                                 if (numValue < 0) cellStyle.setFillForegroundColor(lightRedStyle.getFillForegroundColorColor());
+                                 else if (numValue == 0) cellStyle.setFillForegroundColor(lightYellowStyle.getFillForegroundColorColor());
+                            }
+                            
+                            if (cellStyle.getFillForegroundColorColor() != null && 
+                                (normalStyle.getFillForegroundColorColor() == null || 
+                                !cellStyle.getFillForegroundColorColor().equals(normalStyle.getFillForegroundColorColor())) ) {
+                                cellStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+                            }
+                            cell.setCellStyle(cellStyle);
+
+                        } else if (value != null) { // Handle non-Double values (like Refresh Date, Ticker, Name)
                             cell.setCellValue(value.toString());
                             cell.setCellStyle(normalStyle);
                         } else {
-                            cell.setCellStyle(normalStyle);
+                             cell.setCellStyle(normalStyle); 
                         }
                     }
                 }
 
-                // Format numbers
-                DataFormat format = workbook.createDataFormat();
-                for (int row = 1; row <= tableModel.getRowCount(); row++) {
-                    for (int col = 0; col < columnCount; col++) {
-                        Cell cell = sheet.getRow(row).getCell(col);
-                        if (cell != null && cell.getCellType() == CellType.NUMERIC) {
-                            XSSFCellStyle currentStyle = (XSSFCellStyle) cell.getCellStyle();
-                            XSSFCellStyle newStyle = workbook.createCellStyle();
-                            newStyle.cloneStyleFrom(currentStyle);
-                            newStyle.setDataFormat(format.getFormat("0.00"));
-                            cell.setCellStyle(newStyle);
-                        }
-                    }
+                for (int i = 0; i < excelHeaderRow.getLastCellNum(); i++) {
+                    sheet.autoSizeColumn(i);
                 }
 
-                // Auto-size columns
-                for (int i = 0; i < columnCount; i++) {
-                    TableColumn tableColumn = columnModel.getColumn(i);
-                    if (tableColumn.getMaxWidth() != 0) {
-                        sheet.autoSizeColumn(i);
-                    } else {
-                        sheet.setColumnWidth(i, 0);
-                    }
-                }
-
-                // Write to file
                 try (FileOutputStream outputStream = new FileOutputStream(file)) {
                     workbook.write(outputStream);
-                    JOptionPane.showMessageDialog(null,
-                            "Watchlist exported successfully!",
-                            "Export Complete",
-                            JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Watchlist exported successfully!", "Export Complete", JOptionPane.INFORMATION_MESSAGE);
                 }
+
             } catch (Exception e) {
                 e.printStackTrace();
-                JOptionPane.showMessageDialog(null,
-                        "Error exporting file: " + e.getMessage(),
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(watchlistTable.getTopLevelAncestor(), "Error exporting file: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
-
-// Helper methods to get column values for a specific row
-    private double getPEAvgForRow(int row) {
-        int column = findColumnByName("PE Avg");
-        if (column != -1) {
-            Object value = tableModel.getValueAt(row, column);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
-    private double getPBAvgForRow(int row) {
-        int column = findColumnByName("PB Avg");
-        if (column != -1) {
-            Object value = tableModel.getValueAt(row, column);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
-    private double calculatePEForward(double price, double eps) {
-        if (eps <= 0) {
-            return 0.0;
-        }
-        return round(price / eps, 2);
-    }
-
-    private String[] getPEForwardColumnNames() {
-        int currentYear = Calendar.getInstance().get(Calendar.YEAR);
-        String[] peForwardColumnNames = new String[3];
-        for (int i = 0; i < 3; i++) {
-            peForwardColumnNames[i] = "PE FWD" + (currentYear + i);
-        }
-        return peForwardColumnNames;
-    }
-
-    private double getPriceToFCFAvgForRow(int row) {
-        int column = findColumnByName("PFCF Avg");
-        if (column != -1) {
-            Object value = tableModel.getValueAt(row, column);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
-    private double getROEAvgForRow(int row) {
-        int column = findColumnByName("ROE Avg");
-        if (column != -1) {
-            Object value = tableModel.getValueAt(row, column);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
-    private double getDEAvgForRow(int row) {
-        int column = findColumnByName("DE Avg");
-        if (column != -1) {
-            Object value = tableModel.getValueAt(row, column);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
-    private int findColumnByName(String columnName) {
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            if (tableModel.getColumnName(i).equals(columnName)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private double getPriceForRow(int row) {
-        int priceColumn = -1;
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            if (tableModel.getColumnName(i).equals("Price")) {
-                priceColumn = i;
-                break;
-            }
-        }
-
-        if (priceColumn != -1) {
-            Object value = tableModel.getValueAt(row, priceColumn);
-            if (value instanceof Number) {
-                return ((Number) value).doubleValue();
-            }
-        }
-        return 0.0;
-    }
-
 }

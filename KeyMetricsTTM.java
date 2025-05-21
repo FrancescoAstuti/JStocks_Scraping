@@ -36,14 +36,8 @@ public class KeyMetricsTTM {
         DECIMAL_FORMATTER.setRoundingMode(RoundingMode.HALF_UP);
     }
 
-    /**
-     * Fetches a specific metric from Financial Modeling Prep API
-     * 
-     * @param ticker The stock ticker symbol
-     * @param metricName The name of the metric to fetch
-     * @return The value of the specified metric as a String
-     * @throws IOException If there's an error connecting to the API
-     */
+   
+     
     private static String getMetricFromFMP(String ticker, String metricName) throws IOException {
         String urlString = API_URL_KEY_METRICS_TTM + ticker + "?apikey=" + API_KEY;
         URL url = new URL(urlString);
